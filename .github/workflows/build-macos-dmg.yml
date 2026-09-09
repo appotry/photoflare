@@ -110,10 +110,25 @@ jobs:
       # runs on machines that happen to have the exact same Homebrew formulae
       # installed. dylibbundler copies them into Contents/Frameworks and rewrites
       # every load command to @executable_path/../Frameworks/.
+      #
+      # Run this as two separate passes rather than passing both -x binaries to
+      # a single invocation. dylibbundler's own recursive bundling (-b) rescans
+      # each dependency after copying it into Frameworks to discover its own
+      # sub-dependencies; when a second -x binary shares an already-bundled
+      # dependency (e.g. libltdl via GraphicsMagick), this can make it re-resolve
+      # that dependency's "original" location as the copy that's already inside
+      # Frameworks and try to cp a file onto itself, aborting with
+      # "cp: ... are identical (not copied)" (see auriamg/macdylibbundler#83).
+      # Bundling from the main executable first, then only *fixing up* (no -b)
+      # the second binary's references to the now-already-bundled copies avoids
+      # ever re-copying the same dependency twice.
       - name: Bundle non-Qt (Homebrew) dependencies
         run: |
           dylibbundler -cd -of -b -ns \
             -x photoflare.app/Contents/MacOS/photoflare \
+            -d photoflare.app/Contents/Frameworks \
+            -p @executable_path/../Frameworks/
+          dylibbundler -of -ns \
             -x photoflare.app/Contents/MacOS/gmic_photoflare_qt \
             -d photoflare.app/Contents/Frameworks \
             -p @executable_path/../Frameworks/
