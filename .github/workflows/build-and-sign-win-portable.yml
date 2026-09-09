@@ -1,0 +1,163 @@
+name: build-and-sign-win-portable
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      # ------------------------------------------------------------------
+      # 1. Checkout source
+      # ------------------------------------------------------------------
+      - name: Checkout photoflare
+        uses: actions/checkout@v4
+        with:
+          path: src
+
+      - name: Checkout photoflare-pkg (Windows deps)
+        uses: actions/checkout@v4
+        with:
+          repository: PhotoFlare/photoflare-pkg
+          path: photoflare-pkg
+
+      - name: Restore GraphicsMagick dev files
+        run: |
+          New-Item -ItemType Directory -Path "src\external\GraphicsMagick-1.3.28" -Force | Out-Null
+          Copy-Item photoflare-pkg\windows\graphicsmagick-dev\* src\external\GraphicsMagick-1.3.28\ -Recurse -Force
+
+      # ------------------------------------------------------------------
+      # 2. Toolchain
+      # ------------------------------------------------------------------
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.7.3'
+          arch: 'win64_msvc2019_64'
+          modules: 'qtimageformats'
+
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # ------------------------------------------------------------------
+      # 3. Build
+      # ------------------------------------------------------------------
+      - name: Build photoflare
+        working-directory: src
+        run: |
+          qmake photoflare.pro
+          nmake
+
+      - name: Debug - list build output
+        working-directory: src
+        run: Get-ChildItem -Recurse -Filter "photoflare.exe"
+
+      - name: Debug - locate plugins and languages folders
+        working-directory: src
+        run: |
+          Write-Host "--- plugins ---"
+          Get-ChildItem -Recurse -Directory -Filter "plugins"
+          Write-Host "--- languages ---"
+          Get-ChildItem -Recurse -Directory -Filter "languages"
+
+      # ------------------------------------------------------------------
+      # 4. Assemble the portable package
+      # ------------------------------------------------------------------
+      - name: Assemble portable package
+        shell: pwsh
+        run: |
+          $out = "src\build\output"
+          New-Item -ItemType Directory -Path $out -Force | Out-Null
+
+          # Your own build output
+          Copy-Item src\release\photoflare.exe $out\ -Force
+          Copy-Item src\languages $out\languages -Recurse -Force
+          Copy-Item src\installers\assets\logo.ico $out\ -Force
+          Copy-Item src\installers\assets\gplv3eula.rtf $out\ -Force
+          New-Item -ItemType Directory -Path "$out\DATA" -Force | Out-Null
+          Copy-Item src\installers\assets\DATA\photoflare_studio_ad.png "$out\DATA\" -Force
+
+          # Qt runtime, auto-detected from the built exe
+          windeployqt --compiler-runtime "$out\photoflare.exe"
+          
+          # windeployqt only scans photoflare.exe's own deps, these two are
+          # needed by GraphicsMagick (OpenMP + VC++ runtime) but go undetected
+          # since GraphicsMagick DLLs are copied in after windeployqt runs
+          Copy-Item "$env:VCToolsRedistDir\x64\Microsoft.VC*.CRT\vcruntime140_1.dll" $out\ -Force
+          Copy-Item "$env:VCToolsRedistDir\x64\Microsoft.VC*.OpenMP\vcomp140.dll" $out\ -Force
+
+          # Third-party deps checked out from photoflare-pkg
+          Copy-Item photoflare-pkg\windows\graphicsmagick\* $out\ -Force
+          Copy-Item photoflare-pkg\windows\gmic\gmic_qt.exe $out\ -Force
+
+          # Portable marker file
+          New-Item -Path "$out\portable" -ItemType File -Force | Out-Null
+
+      # ------------------------------------------------------------------
+      # 5. Set exe version info
+      # ------------------------------------------------------------------
+
+      - name: Read version from stable.json
+        id: version
+        shell: pwsh
+        run: |
+          $raw = Get-Content src\versions\stable.json -Raw
+          $version = $raw.Trim()
+          $fullVersion = "$version.0"
+          Write-Host "Read version: $version -> using $fullVersion"
+          echo "version=$fullVersion" >> $env:GITHUB_OUTPUT
+
+      - name: Download rcedit
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe" -OutFile "$env:RUNNER_TEMP\rcedit.exe"
+
+      - name: Set exe version info
+        shell: pwsh
+        run: |
+          & "$env:RUNNER_TEMP\rcedit.exe" "src\build\output\photoflare.exe" `
+            --set-file-version "${{ steps.version.outputs.version }}" `
+            --set-product-version "${{ steps.version.outputs.version }}"
+
+      # ------------------------------------------------------------------
+      # 6. Upload unsigned artifact
+      # ------------------------------------------------------------------
+      - name: Upload unsigned artifact
+        id: upload-unsigned-artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: photoflare-unsigned
+          path: src\build\output\photoflare.exe
+
+      # ------------------------------------------------------------------
+      # 7. Submit to SignPath and wait for the signed result
+      # ------------------------------------------------------------------
+      - name: Submit signing request
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: 'a0d93669-036e-4935-85d0-ad3813a95399'
+          project-slug: 'photoflare'
+          signing-policy-slug: 'test-signing'
+          artifact-configuration-slug: 'github'
+          github-artifact-id: '${{ steps.upload-unsigned-artifact.outputs.artifact-id }}'
+          wait-for-completion: true
+          output-artifact-directory: 'signed'
+
+      # ------------------------------------------------------------------
+      # 8. Rebuild the final portable folder with the signed exe
+      # ------------------------------------------------------------------
+      - name: Swap in signed exe
+        shell: pwsh
+        run: |
+          Copy-Item signed\photoflare.exe src\build\output\photoflare.exe -Force
+
+      - name: Upload signed portable package
+        uses: actions/upload-artifact@v4
+        with:
+          name: photoflare-portable-signed
+          path: src\build\output\

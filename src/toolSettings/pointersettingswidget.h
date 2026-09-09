@@ -37,6 +37,9 @@ public:
     int strokeWidth() const;
     bool selectionIsEllipse() const;
     bool selectionIsLasso() const;
+    void saveSettings() const;
+    void loadSettings();
+    void setIconTheme(bool dark);
 
 signals:
     void settingsChanged();
@@ -48,6 +51,9 @@ private slots:
     void on_checkBoxStroke_clicked(bool checked);
     void on_checkBoxFill_clicked(bool checked);
     void on_strokeWidth_valueChanged(int width);
+
+protected:
+    void changeEvent(QEvent *e) override;
 
 private:
     Ui::PointerSettingsWidget *ui;

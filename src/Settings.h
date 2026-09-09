@@ -18,7 +18,9 @@
 #ifndef SETTINGS_H
 #define SETTINGS_H
 
+#include <QColor>
 #include <QObject>
+#include <QVariant>
 
 #define SETTINGS Settings::instance()
 
@@ -30,6 +32,7 @@ class Settings : public QObject
 public:
     ~Settings();
     static Settings* instance();
+    static bool isPortableMode();
     void setDefaultSettings();
     void setMaximizeWindow(bool maximize);
     bool isMaximizeWindow() const;
@@ -73,6 +76,14 @@ public:
     QString getIconTheme() const;
     void setMainWindowState(const QByteArray &state);
     QByteArray mainWindowState() const;
+    void setPrimaryColor(const QColor &color);
+    QColor getPrimaryColor() const;
+    void setSecondaryColor(const QColor &color);
+    QColor getSecondaryColor() const;
+    void setSelectedTool(const QString &tool);
+    QString getSelectedTool() const;
+    QVariant value(const QString &key, const QVariant &defaultValue = QVariant()) const;
+    void setValue(const QString &key, const QVariant &value);
 
 private:
     explicit Settings(QObject *parent = 0);

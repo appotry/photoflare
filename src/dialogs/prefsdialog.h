@@ -38,17 +38,16 @@ private slots:
     void on_saveFolderButton_clicked();
     void on_compressionSlider_sliderMoved(int position);
     void on_historySlider_sliderMoved(int position);
-    void on_restartButton_clicked();
     void set_user_language();
-    void on_comboBoxLanguage_currentIndexChanged();
     void on_buttonBox_rejected();
     void on_compressionSlider_valueChanged(int value);
     void on_historySlider_valueChanged(int value);
     void addFlagIcons(int languages);
 
 signals:
-    void safeQuitApp();
     void iconThemeChanged();
+    void languageChanged(const QString &langCode);
+    void dockLayoutChanged();
 
 private:
     Ui::PrefsDialog *ui;

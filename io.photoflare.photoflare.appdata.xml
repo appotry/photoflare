@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Copyright 2023 Dylan Coakley <info@photoflare.io> -->
+<!-- Copyright 2026 Dylan Coakley <info@photoflare.io> -->
 <component type="desktop-application">
   <id>io.photoflare.photoflare</id>
   <metadata_license>FSFAP</metadata_license>
@@ -17,6 +17,8 @@
       <li>Flip, Rotate and scale images.</li>
       <li>Lots of unique image filters.</li>
       <li>Batch processing tool with support for all editor features.</li>
+      <li>Gmic integration</li>
+      <li>Dark mode</li>
       <li>Multiple translations are supported.</li>
     </ul>
   </description>
@@ -26,7 +28,7 @@
   <screenshots>
     <screenshot type="default">
       <caption>Main Window</caption>
-      <image>https://photoflare.io/wp-content/uploads/2022/03/crossplatform.png</image>
+      <image>https://photoflare.io/flathub/main.jpg</image>
     </screenshot>
   </screenshots>
 
@@ -38,6 +40,51 @@
   </provides>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="1.7.4" date="2026-08-03">
+        <description>
+          <ul>
+            <li>Fixed duplicate config folder created on Linux after organization rename.</li>
+          </ul>
+        </description>
+    </release>
+    <release version="1.7.3" date="2026-07-31">
+        <description>
+          <ul>
+            <li>Updated German translation.</li>
+            <li>Fixed ruler setting not maintained.</li>
+            <li>CI pipeline to build and sign Windows builds.</li>
+            <li>Code improvements.</li>
+          </ul>
+        </description>
+    </release>
+    <release version="1.7.2" date="2026-05-19">
+        <description>
+          <ul>
+            <li>Bug fixes and stability improvements.</li>
+          </ul>
+        </description>
+    </release>
+    <release version="1.7.0" date="2026-05-05">
+        <description>
+          <ul>
+            <li>Migrated to Qt 6.</li>
+            <li>New canvas engine with improved performance.</li>
+            <li>G'MIC integration for hundreds of advanced filters.</li>
+            <li>Added rulers to the canvas.</li>
+            <li>Added dark icon theme with automatic dark mode detection.</li>
+            <li>New lasso, ellipse and move selection tools.</li>
+            <li>EXIF metadata preserved on save.</li>
+            <li>Paste as new image, scale and rotate pasted images.</li>
+            <li>Resize canvas by percentage.</li>
+            <li>Pan image while zoomed in.</li>
+            <li>Session and layout persistence.</li>
+            <li>Portable mode added.</li>
+            <li>Korean translation added.</li>
+            <li>HiDPI and Wayland support improved.</li>
+            <li>Many bug fixes.</li>
+          </ul>
+        </description>
+    </release>
     <release version="1.6.13" date="2023-10-08">
         <description>
           <ul>

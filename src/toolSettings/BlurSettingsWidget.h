@@ -36,9 +36,14 @@ public:
 
     int radius() const;
     int pressure() const;
+    void saveSettings() const;
+    void loadSettings();
 
 signals:
     void settingsChanged();
+
+protected:
+    void changeEvent(QEvent *e) override;
 
 private:
     Ui::BlurSettingsWidget *ui;

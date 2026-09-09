@@ -21,43 +21,58 @@
 #include <QRect>
 #include <QStandardPaths>
 #include <QDir>
+#include <QCoreApplication>
+#include <QFile>
 
 #include "Settings.h"
+
+static bool detectPortableMode()
+{
+    return QFile::exists(QCoreApplication::applicationDirPath() + "/portable");
+}
 
 class SettingsPrivate
 {
 public:
     SettingsPrivate()
     {
-        maximizeWindow = settings.value("MaximizeOnStartup").toBool();
-        geometry = settings.value("CustomWindowGeometry").toRect();
-        recentFiles = settings.value("RecentFiles").toList();
-        multiWindowMode = settings.value("MultiWindowMode").toBool();
-        userLanguage = settings.value("UserLanguage").toString();
-        openFolder = settings.value("OpenFolder").toString();
-        saveFolder = settings.value("SaveFolder").toString();
-        saveFormat = settings.value("SaveFormat").toString();
-        saveFormatEnabled = settings.value("SaveFormatEnabled").toBool();
-        compressionDialogEnabled = settings.value("compressionDialogEnabled").toBool();
-        compressionDefaultValue = settings.value("compressionDefaultValue").toString();
-        historyLimit = settings.value("historyLimit").toString();
-        dockLayout = settings.value("dockLayout").toString();
-        mainWindowState = settings.value("mainWindowState").toByteArray();
-        zoomDirection = settings.value("zoomDirection").toString();
-        memDialogParams = settings.value("memorizeParamsEnabled").toBool();
-        unit = settings.value("unit").toInt();
-        iconTheme = settings.value("iconTheme", "auto").toString();
+        if (detectPortableMode())
+            settings = new QSettings(QCoreApplication::applicationDirPath() + "/photoflare.ini", QSettings::IniFormat);
+        else
+            settings = new QSettings();
+
+        maximizeWindow = settings->value("MaximizeOnStartup").toBool();
+        geometry = settings->value("CustomWindowGeometry").toRect();
+        recentFiles = settings->value("RecentFiles").toList();
+        multiWindowMode = settings->value("MultiWindowMode").toBool();
+        userLanguage = settings->value("UserLanguage").toString();
+        openFolder = settings->value("OpenFolder").toString();
+        saveFolder = settings->value("SaveFolder").toString();
+        saveFormat = settings->value("SaveFormat").toString();
+        saveFormatEnabled = settings->value("SaveFormatEnabled").toBool();
+        compressionDialogEnabled = settings->value("compressionDialogEnabled").toBool();
+        compressionDefaultValue = settings->value("compressionDefaultValue").toString();
+        historyLimit = settings->value("historyLimit").toString();
+        dockLayout = settings->value("dockLayout").toString();
+        mainWindowState = settings->value("mainWindowState").toByteArray();
+        zoomDirection = settings->value("zoomDirection").toString();
+        memDialogParams = settings->value("memorizeParamsEnabled").toBool();
+        unit = settings->value("unit").toInt();
+        iconTheme = settings->value("iconTheme", "auto").toString();
+        primaryColor = QColor(settings->value("primaryColor", "#000000").toString());
+        secondaryColor = QColor(settings->value("secondaryColor", "#ff0000").toString());
+        selectedTool = settings->value("selectedTool", "pointer").toString();
     }
 
     ~SettingsPrivate()
     {
-
+        delete settings;
     }
 
     void setValue(const QString &propertyName, const QVariant &value)
     {
-        settings.setValue(propertyName, value);
-        settings.sync();
+        settings->setValue(propertyName, value);
+        settings->sync();
     }
     bool cutoutEnabled;
     bool maximizeWindow;
@@ -81,7 +96,10 @@ public:
     bool memDialogParams;
     int unit;
     QString iconTheme;
-    QSettings settings;
+    QColor primaryColor;
+    QColor secondaryColor;
+    QString selectedTool;
+    QSettings *settings;
 };
 
 Settings* Settings::m_instance = 0;
@@ -101,11 +119,14 @@ Settings::~Settings()
 
 Settings *Settings::instance()
 {
-    QString loc = QStandardPaths::locate(QStandardPaths::GenericConfigLocation, QString(), QStandardPaths::LocateDirectory)+"photoflare.io";
     if (!m_instance)
         m_instance = new Settings;
-
     return m_instance;
+}
+
+bool Settings::isPortableMode()
+{
+    return detectPortableMode();
 }
 
 void Settings::setDefaultSettings()
@@ -323,7 +344,7 @@ void Settings::setHistoryLimit(const QString val)
 
 QString Settings::getHistoryLimit() const
 {
-    return d->historyLimit;
+    return d->historyLimit.isEmpty() ? "24" : d->historyLimit;
 }
 
 void Settings::setDockLayout(const QString val)
@@ -346,6 +367,49 @@ void Settings::setMainWindowState(const QByteArray &state)
 QByteArray Settings::mainWindowState() const
 {
     return d->mainWindowState;
+}
+
+void Settings::setPrimaryColor(const QColor &color)
+{
+    d->primaryColor = color;
+    d->setValue("primaryColor", color.name());
+}
+
+QColor Settings::getPrimaryColor() const
+{
+    return d->primaryColor;
+}
+
+void Settings::setSecondaryColor(const QColor &color)
+{
+    d->secondaryColor = color;
+    d->setValue("secondaryColor", color.name());
+}
+
+QColor Settings::getSecondaryColor() const
+{
+    return d->secondaryColor;
+}
+
+void Settings::setSelectedTool(const QString &tool)
+{
+    d->selectedTool = tool;
+    d->setValue("selectedTool", tool);
+}
+
+QString Settings::getSelectedTool() const
+{
+    return d->selectedTool;
+}
+
+QVariant Settings::value(const QString &key, const QVariant &defaultValue) const
+{
+    return d->settings->value(key, defaultValue);
+}
+
+void Settings::setValue(const QString &key, const QVariant &value)
+{
+    d->setValue(key, value);
 }
 
 void Settings::setZoomDirection(const QString val)

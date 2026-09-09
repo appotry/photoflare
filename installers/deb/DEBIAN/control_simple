@@ -1,0 +1,13 @@
+Package: photoflare
+Version: 1.7.4
+Architecture: amd64
+Maintainer: Dylan Coakley <info@photoflare.io>
+Section: graphics
+Priority: optional
+Homepage: https://photoflare.io
+Depends: qt6-image-formats-plugins
+Description: Simple but powerful Image Editor
+ Photoflare is an effort to bring quick, simple but powerful image editing to
+ the masses. PhotoFlare is inspired by the image editor PhotoFiltre which is
+ available only on another OS. Photoflare is designed for beginner users with
+ the aim to give them a tool easy to learn and use.

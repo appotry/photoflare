@@ -1,0 +1,98 @@
+name: build-and-sign-win-installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      portable_run_id:
+        description: 'Run ID of the build-and-sign-win-portable run to pull artifacts from (only needed when triggering manually)'
+        required: false
+  workflow_run:
+    workflows: ["build-and-sign-win-portable"]
+    types: [completed]
+
+jobs:
+  build-installer:
+    runs-on: windows-latest
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+
+    steps:
+      # ------------------------------------------------------------------
+      # 1. Checkout source (need installers/Photoflare.aip)
+      # ------------------------------------------------------------------
+      - name: Checkout photoflare
+        uses: actions/checkout@v4
+
+      # ------------------------------------------------------------------
+      # 2. Get the already-signed portable package
+      #    (produced by the build-and-sign-win-portable workflow)
+      # ------------------------------------------------------------------
+      - name: Download signed portable package
+        uses: actions/download-artifact@v4
+        with:
+          name: photoflare-portable-signed
+          path: installers\PhotoFlare_Win_AIP
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id || inputs.portable_run_id }}
+
+      # ------------------------------------------------------------------
+      # 3. Read version from stable.json
+      # ------------------------------------------------------------------
+      - name: Read version from stable.json
+        id: version
+        shell: pwsh
+        run: |
+          $raw = Get-Content versions\stable.json -Raw
+          $version = $raw.Trim()
+          $fullVersion = "$version.0"
+          Write-Host "Read version: $version -> using $fullVersion"
+          echo "version=$fullVersion" >> $env:GITHUB_OUTPUT
+
+      # ------------------------------------------------------------------
+      # 4. Build the installer with Advanced Installer
+      # ------------------------------------------------------------------
+      - name: Build installer with Advanced Installer
+        uses: caphyon/advinst-github-action@main
+        with:
+          advinst-version: '23.9'
+          advinst-license: '${{ secrets.ADVINST_LICENSE_KEY }}'
+          advinst-enable-automation: 'true'
+          aip-path: '${{ github.workspace }}\installers\Photoflare.aip'
+          aip-build-name: DefaultBuild
+          aip-output-dir: '${{ github.workspace }}\installer-output'
+          aip-commands: |
+            SetVersion ${{ steps.version.outputs.version }}
+
+      # ------------------------------------------------------------------
+      # 5. Upload the unsigned installer output
+      # ------------------------------------------------------------------
+      - name: Upload unsigned installer
+        id: upload-unsigned-installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: photoflare-installer-unsigned
+          path: installer-output\*.msi
+
+      # ------------------------------------------------------------------
+      # 6. Submit to SignPath and wait for the signed result
+      # ------------------------------------------------------------------
+      - name: Submit installer for signing
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: 'a0d93669-036e-4935-85d0-ad3813a95399'
+          project-slug: 'photoflare'
+          signing-policy-slug: 'test-signing'
+          artifact-configuration-slug: 'github-installer'
+          github-artifact-id: '${{ steps.upload-unsigned-installer.outputs.artifact-id }}'
+          wait-for-completion: true
+          output-artifact-directory: 'installer-signed'
+
+      # ------------------------------------------------------------------
+      # 7. Upload the final signed installer
+      # ------------------------------------------------------------------
+      - name: Upload signed installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: photoflare-installer-signed
+          path: installer-signed\

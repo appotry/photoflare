@@ -17,6 +17,7 @@
 
 #include "pointersettingswidget.h"
 #include "ui_pointersettingswidget.h"
+#include "../Settings.h"
 
 PointerSettingsWidget::PointerSettingsWidget(QWidget *parent) :
     QWidget(parent),
@@ -32,6 +33,26 @@ PointerSettingsWidget::PointerSettingsWidget(QWidget *parent) :
 PointerSettingsWidget::~PointerSettingsWidget()
 {
     delete ui;
+}
+
+void PointerSettingsWidget::setIconTheme(bool dark)
+{
+    auto p = [dark](const char *name) {
+        QString path = QStringLiteral(":/icons/assets/icons/selections/") + QLatin1String(name);
+        if (dark)
+            path.replace(QLatin1String(":/icons/"), QLatin1String(":/icons-dark/"));
+        return QIcon(path);
+    };
+    ui->square_sel->setIcon(p("square_sel.png"));
+    ui->circle_sel->setIcon(p("circle_sel.png"));
+    ui->lasso_sel->setIcon(p("lasso_sel.png"));
+}
+
+void PointerSettingsWidget::changeEvent(QEvent *e)
+{
+    QWidget::changeEvent(e);
+    if (e->type() == QEvent::LanguageChange)
+        ui->retranslateUi(this);
 }
 
 bool PointerSettingsWidget::stroke() const
@@ -115,3 +136,22 @@ void PointerSettingsWidget::on_strokeWidth_valueChanged(int width)
     Q_UNUSED(width)
 }
 
+void PointerSettingsWidget::saveSettings() const
+{
+    SETTINGS->setValue("toolSettings/pointer/stroke", stroke());
+    SETTINGS->setValue("toolSettings/pointer/fill", fill());
+    SETTINGS->setValue("toolSettings/pointer/strokeWidth", strokeWidth());
+    const QString sel = selectionIsLasso() ? "lasso" : selectionIsEllipse() ? "ellipse" : "rect";
+    SETTINGS->setValue("toolSettings/pointer/selection", sel);
+}
+
+void PointerSettingsWidget::loadSettings()
+{
+    ui->checkBoxStroke->setChecked(SETTINGS->value("toolSettings/pointer/stroke", false).toBool());
+    ui->checkBoxFill->setChecked(SETTINGS->value("toolSettings/pointer/fill", false).toBool());
+    ui->strokeWidth->setValue(SETTINGS->value("toolSettings/pointer/strokeWidth", 1).toInt());
+    const QString sel = SETTINGS->value("toolSettings/pointer/selection", "rect").toString();
+    ui->square_sel->setChecked(sel == "rect");
+    ui->circle_sel->setChecked(sel == "ellipse");
+    ui->lasso_sel->setChecked(sel == "lasso");
+}

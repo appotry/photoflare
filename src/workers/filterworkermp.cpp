@@ -22,7 +22,7 @@
 #include <cmath>
 #include "omp.h"
 
-//#include <QDebug>
+#include <QDebug>
 
 FilterWorkerMP::FilterWorkerMP(QObject *parent) : QObject(parent)
 {
@@ -46,12 +46,13 @@ void FilterWorkerMP::setDoubleVal(double v)
 void FilterWorkerMP::process()
 {
     QImage newImage = currentImage;
+    bool errorReported = false;
 
     int maxThreads = omp_get_max_threads();
     int w = currentImage.width();
     int h = currentImage.height();
 
-    #pragma omp parallel shared(currentImage, newImage) firstprivate(maxThreads, w, h)
+    #pragma omp parallel shared(currentImage, newImage, errorReported) firstprivate(maxThreads, w, h)
 {
     #pragma omp for schedule(dynamic) nowait
     for(int thread=0;thread<maxThreads;thread++) {
@@ -63,6 +64,10 @@ void FilterWorkerMP::process()
 //        qDebug() << "args: " << 0 << ", " << top << ", " << w << ", " << bottom;
         QImage newImageSlice(currentImageSlice);
 //        qDebug() << "current image dims: " +currentImageSlice.height() << ", " << currentImageSlice.width();
+
+        // Exceptions must be caught here, not left to escape the omp parallel
+        // region (that terminates the whole process instead of being catchable).
+        try {
 
         if(currentFilter == "gammacorrectminus")
         {
@@ -275,6 +280,24 @@ void FilterWorkerMP::process()
         else if(currentFilter == "colourthreshold")
         {
             newImageSlice = FilterManager::instance()->colourthreshold(currentImageSlice);
+        }
+
+        } catch (const std::exception &e) {
+            qWarning() << "Filter" << currentFilter << "failed on a slice, that slice left unmodified:" << e.what();
+            newImageSlice = currentImageSlice;
+            #pragma omp critical
+            if (!errorReported) {
+                errorReported = true;
+                emit filterError(tr("Filter '%1' failed: %2").arg(currentFilter, QString::fromUtf8(e.what())));
+            }
+        } catch (...) {
+            qWarning() << "Filter" << currentFilter << "failed on a slice with an unknown exception, that slice left unmodified.";
+            newImageSlice = currentImageSlice;
+            #pragma omp critical
+            if (!errorReported) {
+                errorReported = true;
+                emit filterError(tr("Filter '%1' failed with an unknown error.").arg(currentFilter));
+            }
         }
 
         // Setup new image by joining the slices together

@@ -1,5 +1,5 @@
 name: photoflare
-version: 1.7.0
+version: 1.7.4
 summary: PhotoFlare
 description: Simple but powerful Cross Platform image editor
 icon: installers/deb/DEBIAN/usr/share/icons/hicolor/48x48/apps/photoflare.png
@@ -33,3 +33,50 @@ parts:
       - libomp5-18
       - libqt6printsupport6
       - qt6-image-formats-plugins
+
+  gmic-qt:
+    source: https://github.com/c-koi/gmic-qt.git
+    source-type: git
+    source-tag: v.3.4.2
+    plugin: cmake
+    cmake-parameters:
+      - -DBUILD_WITH_QT6=ON
+      - -DGMIC_QT_HOST=none
+      - -DENABLE_SYSTEM_GMIC=OFF
+      - -DENABLE_FFTW3=ON
+      - -DENABLE_CURL=ON
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_EXE_LINKER_FLAGS=-no-pie
+    override-pull: |
+      craftctl default
+      # Clone the matching G'MIC source one level above the gmic-qt checkout so
+      # that gmic-qt's CMakeLists default GMIC_PATH (../gmic/src) resolves correctly.
+      git clone --depth 1 --branch v.3.7.5 \
+        https://github.com/GreycLab/gmic.git \
+        $CRAFT_PART_SRC/../gmic
+      # Pre-fetch CImg.h from the matching versioned tag — the gmic Makefile's
+      # CImg.h target downloads from master (latest) which causes a version mismatch.
+      GMIC_SRC="$CRAFT_PART_SRC/../gmic/src"
+      GMIC_VER=$(grep -o 'gmic_version [0-9]*' "$GMIC_SRC/gmic.h" | grep -o '[0-9]*')
+      MAJOR=$(echo $GMIC_VER | cut -c1)
+      MINOR=$(echo $GMIC_VER | cut -c2)
+      PATCH=$(echo $GMIC_VER | cut -c3)
+      wget --no-check-certificate --quiet -O "$GMIC_SRC/CImg.h" \
+        "https://github.com/GreycLab/CImg/raw/v.${MAJOR}.${MINOR}.${PATCH}/CImg.h"
+      make -C "$GMIC_SRC" gmic_stdlib_community.h
+    build-packages:
+      - cmake
+      - make
+      - wget
+      - qt6-base-dev
+      - qt6-tools-dev
+      - qt6-tools-dev-tools
+      - libfftw3-dev
+      - libcurl4-openssl-dev
+      - libomp-dev
+    override-build: |
+      craftctl default
+      mv $CRAFT_PART_INSTALL/usr/bin/gmic_qt $CRAFT_PART_INSTALL/usr/bin/gmic_photoflare_qt
+    stage-packages:
+      - libfftw3-double3
+      - libomp5-18

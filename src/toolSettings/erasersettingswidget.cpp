@@ -17,6 +17,7 @@
 
 #include "erasersettingswidget.h"
 #include "ui_erasersettingswidget.h"
+#include "../Settings.h"
 
 EraserSettingsWidget::EraserSettingsWidget(QWidget *parent) :
     QWidget(parent),
@@ -32,6 +33,13 @@ EraserSettingsWidget::~EraserSettingsWidget()
     delete ui;
 }
 
+void EraserSettingsWidget::changeEvent(QEvent *e)
+{
+    QWidget::changeEvent(e);
+    if (e->type() == QEvent::LanguageChange)
+        ui->retranslateUi(this);
+}
+
 int EraserSettingsWidget::radius() const
 {
     return ui->radiusSlider->value();
@@ -40,4 +48,14 @@ int EraserSettingsWidget::radius() const
 void EraserSettingsWidget::on_radiusSlider_valueChanged(int value)
 {
     ui->radiusValueLabel->setText(QString::number(value));
+}
+
+void EraserSettingsWidget::saveSettings() const
+{
+    SETTINGS->setValue("toolSettings/eraser/radius", radius());
+}
+
+void EraserSettingsWidget::loadSettings()
+{
+    ui->radiusSlider->setValue(SETTINGS->value("toolSettings/eraser/radius", 10).toInt());
 }

@@ -19,10 +19,11 @@
 
 //#include <QDebug>
 
-#include <QTranslator>
 #include <QtSingleApplication>
 #include <QStandardPaths>
 #include <QDir>
+#include <QFile>
+#include <QSettings>
 
 #include "mainwindow.h"
 #include "Settings.h"
@@ -39,22 +40,38 @@ int main(int argc, char *argv[])
     {
         // App details
         app.setApplicationName("photoflare");
-        app.setApplicationVersion("1.7.0");
-        app.setOrganizationDomain("photoflare.io");
+        app.setApplicationVersion("1.7.4");
+        app.setOrganizationName("PhotoFlare");
+        app.setOrganizationDomain("PhotoFlare");
 
         // Setup Default settings
-        QString loc = QStandardPaths::locate(QStandardPaths::ConfigLocation, QString(), QStandardPaths::LocateDirectory)+"photoflare.io";
-        if(!QDir(loc).exists())
-        {
-            QDir().mkdir(loc);
-            SETTINGS->setDefaultSettings();
+        if (Settings::isPortableMode()) {
+            // Portable mode: settings go to photoflare.ini next to the executable.
+            // Treat a missing ini file as first run.
+            const QString iniPath = QCoreApplication::applicationDirPath() + "/photoflare.ini";
+            if (!QFile::exists(iniPath)) {
+                SETTINGS->setDefaultSettings();
+            }
+        } else {
+            // QStandardPaths::locate() with an empty filename is unreliable across
+            // Qt versions/distros, so check QSettings' own backing store instead.
+            QSettings settings;
+            if (settings.allKeys().isEmpty()) {
+                SETTINGS->setDefaultSettings();
+            }
         }
 
         // Setup plugins folder if needed
-        QString pluginLoc = QStandardPaths::locate(QStandardPaths::ConfigLocation, QString(), QStandardPaths::LocateDirectory)+"photoflare.io/plugins";
+        // Must match the directory MainWindow::loadPlugins() scans.
+        QString pluginLoc;
+        if (Settings::isPortableMode()) {
+            pluginLoc = QCoreApplication::applicationDirPath() + "/plugins";
+        } else {
+            pluginLoc = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/plugins";
+        }
         if(!QDir(pluginLoc).exists())
         {
-            QDir().mkdir(pluginLoc);
+            QDir().mkpath(pluginLoc);
         }
 
         // Set language based on System locale
@@ -127,26 +144,15 @@ int main(int argc, char *argv[])
             {
                 lang = "ko";
             }
+            else if(sysLanguage == "Poland")
+            {
+                lang = "pl";
+            }
             else
             {
                 lang = "en";
             }
             SETTINGS->setUserLanguage(lang);
-        }
-
-        QTranslator translator;
-        app.installTranslator(&translator);
-
-        QStringList paths = QStandardPaths::standardLocations(QStandardPaths::AppDataLocation);
-        paths.prepend(QCoreApplication::applicationDirPath());
-        for(int i = 0;i < paths.length(); i++)
-        {
-            QFileInfo check_file(paths[i]+"/languages/"+SETTINGS->getUserLanguage()+".qm");
-            if(check_file.exists() && check_file.isFile())
-            {
-                translator.load(SETTINGS->getUserLanguage()+".qm", paths[i]+"/languages/");
-                break;
-            }
         }
 
         MainWindow w;

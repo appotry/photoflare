@@ -42,6 +42,18 @@
     <string notr="true"/>
    </property>
    <layout class="QGridLayout" name="gridLayout">
+    <property name="leftMargin">
+     <number>0</number>
+    </property>
+    <property name="topMargin">
+     <number>0</number>
+    </property>
+    <property name="rightMargin">
+     <number>0</number>
+    </property>
+    <property name="bottomMargin">
+     <number>0</number>
+    </property>
     <item row="0" column="0">
      <widget class="QMdiArea" name="mdiArea">
       <property name="styleSheet">
@@ -356,6 +368,8 @@ QScrollBar::handle {
     <addaction name="menuEdges"/>
     <addaction name="actionTexture"/>
     <addaction name="actionOther"/>
+    <addaction name="separator"/>
+    <addaction name="actionGmicQt"/>
    </widget>
    <widget class="QMenu" name="menuView">
     <property name="title">
@@ -469,13 +483,13 @@ QScrollBar::handle {
    </property>
    <property name="minimumSize">
     <size>
-     <width>150</width>
+     <width>160</width>
      <height>400</height>
     </size>
    </property>
    <property name="maximumSize">
     <size>
-     <width>150</width>
+     <width>160</width>
      <height>400</height>
     </size>
    </property>
@@ -483,7 +497,8 @@ QScrollBar::handle {
     <enum>Qt::LeftToRight</enum>
    </property>
    <property name="styleSheet">
-    <string notr="true"/>
+    <string notr="true">QDockWidget::title { padding: 2px 4px; }
+QDockWidget { border-right: 1px solid palette(mid); }</string>
    </property>
    <property name="floating">
     <bool>false</bool>
@@ -513,25 +528,6 @@ QScrollBar::handle {
       <height>0</height>
      </size>
     </property>
-    <property name="styleSheet">
-     <string notr="true">QToolButton {
-border: none;
-}
-
-QToolButton:hover {
-	background: #ddd;
-	border-radius:4px;
-	border: 1px solid #eee;
-}
-
-QToolButton:checked {
-	background: #ddd;
-	border-radius:4px;
-	border: 1px solid #c0c2c2;
-}
-
-</string>
-    </property>
     <layout class="QVBoxLayout" name="verticalLayout" stretch="0">
      <property name="spacing">
       <number>0</number>
@@ -557,13 +553,13 @@ QToolButton:checked {
         <enum>QLayout::SetDefaultConstraint</enum>
        </property>
        <property name="leftMargin">
-        <number>10</number>
+        <number>15</number>
        </property>
        <property name="topMargin">
         <number>0</number>
        </property>
        <property name="rightMargin">
-        <number>10</number>
+        <number>15</number>
        </property>
        <property name="bottomMargin">
         <number>0</number>
@@ -1021,21 +1017,21 @@ QToolButton:checked {
           <bool>true</bool>
          </property>
          <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
+          <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
            <horstretch>0</horstretch>
            <verstretch>0</verstretch>
           </sizepolicy>
          </property>
          <property name="minimumSize">
           <size>
-           <width>150</width>
-           <height>200</height>
+           <width>133</width>
+           <height>177</height>
           </size>
          </property>
          <property name="maximumSize">
           <size>
-           <width>200</width>
-           <height>200</height>
+           <width>133</width>
+           <height>177</height>
           </size>
          </property>
          <property name="cursor">
@@ -1105,15 +1101,18 @@ QToolButton:checked {
   <widget class="QDockWidget" name="dockWidgetSettings">
    <property name="minimumSize">
     <size>
-     <width>150</width>
+     <width>160</width>
      <height>38</height>
     </size>
    </property>
    <property name="maximumSize">
     <size>
-     <width>150</width>
+     <width>160</width>
      <height>400</height>
     </size>
+   </property>
+   <property name="styleSheet">
+    <string notr="true">QDockWidget::title { padding: 2px 4px; }</string>
    </property>
    <property name="features">
     <set>QDockWidget::DockWidgetMovable</set>
@@ -1654,6 +1653,11 @@ QToolButton:checked {
   <action name="actionOther">
    <property name="text">
     <string>Other</string>
+   </property>
+  </action>
+  <action name="actionGmicQt">
+   <property name="text">
+    <string>G'MIC-Qt...</string>
    </property>
   </action>
   <action name="actionFilterbar">

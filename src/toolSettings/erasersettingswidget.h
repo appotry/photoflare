@@ -33,12 +33,17 @@ public:
     ~EraserSettingsWidget();
 
     int radius() const;
+    void saveSettings() const;
+    void loadSettings();
 
 signals:
     void settingsChanged();
 
 private slots:
     void on_radiusSlider_valueChanged(int value);
+
+protected:
+    void changeEvent(QEvent *e) override;
 
 private:
     Ui::EraserSettingsWidget *ui;

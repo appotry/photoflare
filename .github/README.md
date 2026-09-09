@@ -1,12 +1,16 @@
 # Photoflare
 
 [![License: GPL v3+](https://img.shields.io/badge/License-GPL-yellowgreen.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![GitHub release](https://img.shields.io/badge/Release-1.6.13-green.svg)](https://github.com/PhotoFlare/photoflare/releases)
+[![GitHub release](https://img.shields.io/badge/Release-1.7.4-green.svg)](https://github.com/PhotoFlare/photoflare/releases)
 [![latest packaged version(s)](https://repology.org/badge/latest-versions/photoflare.svg)](https://repology.org/project/photoflare/versions)
 
-Photoflare is a cross-platform image editor with an aim to balance between powerful features and a very friendly graphical user interface. It suits a wide variety of different tasks and users who value a more nimble workflow. Features include basic image editing capabilities, paint brushes, image filters, colour adjustments and more advanced features such as Batch image processing.
+Photoflare is a powerful yet easy-to-use cross-platform image editor. It suits a wide variety of different tasks and users who value a more nimble workflow. Features include basic image editing capabilities, paint brushes, image filters, colour adjustments and more advanced features such as Batch image processing.
 
-<img src="https://photoflare.io/wp-content/uploads/2022/03/crossplatform.png">
+Shoot RAW? [PhotoFlare Lens](https://photoflare.io/lens/) is a free RAW viewer supporting 700+ camera models with non-destructive XMP editing.
+
+Looking for layers, non-destructive editing, and a professional brush engine? Check out [PhotoFlare Studio](https://photoflare.io/studio/).
+
+<img src="https://photoflare.io/flathub/main.jpg">
 
 ## Documentation
 Information on current features and how to use the application will be 
@@ -25,14 +29,20 @@ Information on current features and how to use the application will be
 - qt6-base-dev
 
 #### Ubuntu (24.04)  
-`sudo apt-get install libgraphicsmagick++1-dev libc6-dev libqt6core6t64 libqt6gui6t64 libqt6widgets6t64 libomp-dev qt6-base-dev qtcreator`
+`sudo apt-get install g++ libgraphicsmagick++1-dev libc6-dev libqt6core6t64 libqt6gui6t64 libqt6widgets6t64 libomp-dev qt6-base-dev qtcreator`
 
 #### Ubuntu (26.04)
-`sudo apt-get install libgraphicsmagick++1-dev libc6-dev libqt6core6 libqt6gui6 libqt6widgets6 libomp-21-dev qt6-base-dev qtcreator`
+`sudo apt-get install g++ libgraphicsmagick++1-dev libc6-dev libqt6core6 libqt6gui6 libqt6widgets6 libomp-21-dev qt6-base-dev qtcreator`
 
 Compile using either by opening the .pro file with Qt Creator or use qmake passing the .pro file as a parameter. 
 
 `qmake Photoflare.pro`
+
+#### gmic-qt
+```bash
+git submodule update --init --recursive
+bash external/build_gmic_photoflare_qt.sh
+```
 
 Full instructions for each platform <a href="https://photoflare.io/contributing/building-the-source/">available here</a>
 
@@ -66,5 +76,7 @@ Languages currently available:
 - Spanish (es)
 - Japanese (ja)
 - Turkish (tr)
+- Korean (ko)
+- Polish (pl)
 
 If you would like to add to this list then get in touch. Instructions on adding a translation is <a href="https://photoflare.io/contributing/translations/">available here</a>

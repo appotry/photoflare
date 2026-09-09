@@ -36,9 +36,14 @@ public:
 
     int tolerance() const;
     bool color() const;
+    void saveSettings() const;
+    void loadSettings();
 
 signals:
     void settingsChanged();
+
+protected:
+    void changeEvent(QEvent *e) override;
 
 private:
     Ui::MagicWandSettingsWidget *ui;

@@ -22,9 +22,14 @@
 #include <QMdiArea>
 #include <QLabel>
 #include <QNetworkReply>
+#include <QHash>
+#include <QSettings>
+#include <QTranslator>
 #include <functional>
 
 #include "dialogs/batchdialog.h"
+#include "plugins/AppContext.h"
+#include "plugins/IPhotoflarePlugin.h"
 
 namespace Ui {
 class MainWindow;
@@ -47,7 +52,9 @@ class PaintWidget;
 class TransparentDialog;
 class PrefsDialog;
 
-class MainWindow : public QMainWindow
+class PluginManager;
+
+class MainWindow : public QMainWindow, public AppContext
 {
     Q_OBJECT
 
@@ -57,6 +64,17 @@ public:
 
     PaintWidget* getCurrentPaintWidget();
     void openFile(const QString& fileName);
+
+    // AppContext implementation
+    QImage*    currentImage()                                       override;
+    void       markCanvasDirty()                                    override;
+    void       pushUndoState(const QString& label)                  override;
+    void       registerMenuAction(const QString& path, QAction* a)  override;
+    void       registerDockPanel(const QString& title, QWidget* w)  override;
+    void       showStatusMessage(const QString& msg, int ms = 3000) override;
+    QSettings& pluginSettings(const QString& id)                    override;
+    QWidget*   mainWindow()                                         override { return this; }
+    QString    appVersion() const                                   override { return "2.1.0"; }
 
 public slots:
     void handleMessage(const QString& message);
@@ -230,16 +248,19 @@ private slots:
     void on_actionShow_grid_triggered();
     void on_actionGrid_settings_triggered();
     void on_actionShow_rulers_triggered();
+    void on_actionGmicQt_triggered();
 
     QString prepareFile(const QString& fileName);
     bool fileTypeSupported(QList<QByteArray> formats, QString ext);
     void getNextZoomFromScale(QString scaletext);
     void getPrevZoomFromScale(QString scaletext);
 
-    void onSafeQuitApp();
+    void onLanguageChanged(const QString &langCode);
+    void onDockLayoutChanged();
 
 protected:
     void closeEvent(QCloseEvent *event);
+    void changeEvent(QEvent *e) override;
     bool eventFilter(QObject * obj, QEvent * e);
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dropEvent(QDropEvent *event) override;
@@ -266,10 +287,17 @@ private:
     // selection only when the result has the same dimensions as the original.
     void applyFilteredImage(PaintWidget *widget, const QImage &original, const QImage &filtered);
 
+    void loadPlugins();
+    void showFilterDialog(IFilterPlugin* plugin);
+    void loadTranslator(const QString &langCode);
+    QMenu* ensureMenuPath(const QString& path);
+    QVariantMap collectParams(IFilterPlugin* plugin,
+                              const QHash<QString, QWidget*>& widgets);
+
     Ui::MainWindow *ui;
     QString m_toolSelected;
     QString m_previousToolSelected;
-    PointerSettingsWidget *m_ptSettingsWidget;
+    PointerSettingsWidget *m_ptSettingsWidget = nullptr;
     PaintBrushSettingsWidget *m_pbSettingsWidget;
     PaintBrushAdvSettingsWidget *m_pbAdvSettingsWidget;
     SprayCanSettingsWidget *m_scSettingsWidget;
@@ -286,6 +314,12 @@ private:
     QLabel *batchLbl;
     QLabel *imagesizeLbl;
     QLabel *selectionLbl;
+
+    QTranslator *m_translator = nullptr;
+    QTranslator *m_qtTranslator = nullptr;
+    PluginManager* m_pluginManager = nullptr;
+    QImage         m_pluginImageCache;
+    QHash<QString, QSettings*> m_pluginSettings;
 };
 
 #endif // MAINWINDOW_H

@@ -18,7 +18,6 @@
 // Preferences dialog class.
 
 #include <QFileDialog>
-#include <QProcess>
 #include <QStandardPaths>
 #include <QDesktopServices>
 
@@ -111,7 +110,8 @@ PrefsDialog::PrefsDialog(QWidget *parent) :
               << tr("Indonesian")
               << tr("Spanish")
               << tr("Japanese")
-              << tr("Turkish");
+              << tr("Turkish")
+              << tr("Polish");
 
     ui->comboBoxLanguage->addItems(languages);
     addFlagIcons(languages.count());
@@ -151,8 +151,9 @@ PrefsDialog::PrefsDialog(QWidget *parent) :
         ui->comboBoxLanguage->setCurrentIndex(14);
     else if(SETTINGS->getUserLanguage() == "tr")
         ui->comboBoxLanguage->setCurrentIndex(15);
+    else if(SETTINGS->getUserLanguage() == "pl")
+        ui->comboBoxLanguage->setCurrentIndex(16);
 
-    ui->restartButton->hide();
 }
 
 PrefsDialog::~PrefsDialog()
@@ -171,6 +172,7 @@ void PrefsDialog::on_buttonBox_accepted()
 
     //Layout tab
     SETTINGS->setDockLayout(QString::number(ui->toolPaletteLocation->currentIndex()));
+    emit dockLayoutChanged();
     SETTINGS->setZoomDirection(QString::number(ui->zoomDirection->currentIndex()));
     {
         static const char* themeKeys[] = {"auto", "light", "dark"};
@@ -200,8 +202,11 @@ void PrefsDialog::on_buttonBox_accepted()
     if (ui->checkBox->isChecked() != SETTINGS->isMultiWindowMode())
         SETTINGS->setMultiWindowMode(ui->checkBox->isChecked());
 
-    // Save language when we close the dialog
+    // Save language when we close the dialog; switch live if it changed
+    const QString oldLang = SETTINGS->getUserLanguage();
     set_user_language();
+    if (SETTINGS->getUserLanguage() != oldLang)
+        emit languageChanged(SETTINGS->getUserLanguage());
 }
 
 void PrefsDialog::on_buttonBox_rejected()
@@ -251,21 +256,6 @@ void PrefsDialog::on_historySlider_valueChanged(int value)
     ui->history_value->setText(val);
 }
 
-void PrefsDialog::on_restartButton_clicked()
-{
-    // Save language before we quit
-    set_user_language();
-
-    // Use safe quit to allow saving/closing files before restarting
-    emit safeQuitApp();
-    QProcess::startDetached(QCoreApplication::applicationFilePath());
-}
-
-void PrefsDialog::on_comboBoxLanguage_currentIndexChanged()
-{
-    ui->restartButton->show();
-}
-
 void PrefsDialog::set_user_language()
 {
     if(ui->comboBoxLanguage->currentIndex() == 0)
@@ -300,6 +290,8 @@ void PrefsDialog::set_user_language()
         SETTINGS->setUserLanguage("ja");
     else if(ui->comboBoxLanguage->currentIndex() == 15)
         SETTINGS->setUserLanguage("tr");
+    else if(ui->comboBoxLanguage->currentIndex() == 16)
+        SETTINGS->setUserLanguage("pl");
 }
 
 void PrefsDialog::addFlagIcons(int languages)
@@ -320,7 +312,8 @@ void PrefsDialog::addFlagIcons(int languages)
           << "Indonesia"
           << "Spain"
           << "Japan"
-          << "Turkey";
+          << "Turkey"
+          << "Poland";
 
     for (int i = 0; i < languages; ++i) {
         ui->comboBoxLanguage->setItemIcon(i,QIcon(flagPath+files[i]+".png"));

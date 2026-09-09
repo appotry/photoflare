@@ -40,12 +40,17 @@ public:
     bool fixed() const;
     bool diffuse() const;
     bool precise() const;
+    void saveSettings() const;
+    void loadSettings();
 
 signals:
     void settingsChanged();
 
 private slots:
     void onFixedChanged();
+
+protected:
+    void changeEvent(QEvent *e) override;
 
 private:
     Ui::StampSettingsWidget *ui;

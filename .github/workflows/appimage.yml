@@ -1,0 +1,163 @@
+name: Build AppImage
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+# APPIMAGE_EXTRACT_AND_RUN=1 is required because GitHub Actions runners
+# do not have FUSE available, which AppImage tools need to self-mount.
+env:
+  APPIMAGE_EXTRACT_AND_RUN: "1"
+
+jobs:
+  appimage:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Install Qt 6.7 via the official Qt online installer.
+      # jurplel/install-qt-action sets QT_ROOT_DIR in the environment,
+      # which we later pass to linuxdeploy-plugin-qt via QMAKE.
+      - name: Install Qt 6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.7.*'
+          host: 'linux'
+          target: 'desktop'
+          arch: 'linux_gcc_64'
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgraphicsmagick++-dev libomp-dev \
+            libfftw3-dev libcurl4-openssl-dev
+
+      # Build the application and stage it into appdir/ using the
+      # standard qmake INSTALL_ROOT mechanism. The .pro already has
+      # correct INSTALLS targets for binary, icons, .desktop, and appstream.
+      - name: Build and stage
+        run: |
+          qmake CONFIG+=release PREFIX=/usr
+          make -j$(nproc)
+          make install INSTALL_ROOT=$PWD/appdir
+
+      # AppImages are relocatable and don't inherit the host's XDG_DATA_DIRS,
+      # so MainWindow::loadTranslator() can't find the .qm files installed
+      # under usr/share/photoflare/languages/ (that lookup only works for
+      # .deb installs because /usr/share happens to be a host XDG_DATA_DIR).
+      # Mirror the .qm files next to the binary so the applicationDirPath()
+      # lookup in loadTranslator() finds them.
+      - name: Stage translations next to binary
+        run: |
+          mkdir -p appdir/usr/bin/languages
+          cp appdir/usr/share/photoflare/languages/*.qm appdir/usr/bin/languages/
+
+      # Clone gmic-qt and the matching G'MIC source tree, build the standalone
+      # gmic_qt binary, and stage it into appdir/usr/bin/ alongside photoflare.
+      #
+      # timeout-minutes bounds a genuine hang instead of the 6h job default;
+      # --verbose prints each compiler invocation so progress is visible (the
+      # tail end of the parallel build can go quiet for a while on heavy
+      # CImg.h-based translation units even when it's just slow, not stuck).
+      - name: Build and stage gmic-qt
+        timeout-minutes: 30
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git clone --depth 1 --branch v.3.4.2 https://github.com/c-koi/gmic-qt.git gmic-qt-src
+          # Pin GMIC core to v.3.7.6: it's the last release where gmic::init_rc()
+          # still returns bool. gmic-qt v.3.4.2 (last tagged gmic-qt release, and
+          # its current master branch too) calls it as `create && gmic::init_rc()`,
+          # which fails to compile against gmic >= v.4.0.0, where init_rc() was
+          # changed to return void. Bumping GMIC core past v.4.0.0 (as previously
+          # tried) breaks this API compatibility, even though it fixes the stdlib
+          # header 404 below.
+          git clone --depth 1 --branch v.3.7.6 https://github.com/GreycLab/gmic.git gmic-qt-src/gmic
+          GMIC_SRC="$PWD/gmic-qt-src/gmic/src"
+          GMIC_VER=$(grep -oP '(?<=gmic_version )\d+' "$GMIC_SRC/gmic.h")
+          CIMG_TAG="v.${GMIC_VER:0:1}.${GMIC_VER:1:1}.${GMIC_VER:2:1}"
+          wget --no-check-certificate --quiet -O "$GMIC_SRC/CImg.h" \
+            "https://github.com/GreycLab/CImg/raw/${CIMG_TAG}/CImg.h"
+          # gmic.eu only hosts gmic_stdlib_community<VERSION>.h for whatever the
+          # CURRENT GMIC release is (older pinned versions 404 there), but the
+          # header's compressed G'MIC-script content isn't version-locked at
+          # compile time -- it's just a `data_gmic`/`size_data_gmic` byte array,
+          # and CMake's GMIC_PATH build only checks gmic.h vs CImg.h consistency,
+          # not the stdlib header's version. So resolve whatever the latest GMIC
+          # release actually is and fetch that header, decoupled from the core
+          # version pinned above for API compatibility.
+          # Authenticate with the auto-provided GITHUB_TOKEN: unauthenticated
+          # api.github.com requests share a 60/hr-per-IP quota across all
+          # GitHub-hosted runners and get 403'd easily; a Bearer token raises
+          # this to 1000/hr and is scoped to this repo's own install token.
+          LATEST_GMIC_TAG=$(curl -fsSL \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/GreycLab/gmic/releases/latest \
+            | grep -oP '"tag_name":\s*"\K[^"]+') \
+            || { echo "Failed to resolve latest GMIC release tag"; exit 1; }
+          LATEST_GMIC_VER="${LATEST_GMIC_TAG#v.}"
+          LATEST_GMIC_VER="${LATEST_GMIC_VER//./}"
+          wget --quiet -O "$GMIC_SRC/gmic_stdlib_community.h" \
+            "https://gmic.eu/gmic_stdlib_community${LATEST_GMIC_VER}.h" \
+            || { echo "Failed to download gmic_stdlib_community.h"; exit 1; }
+          # Sanity check: this header must define the data_gmic/size_data_gmic
+          # symbols that gmic.cpp's decompress_stdlib() expects, otherwise fail
+          # fast here instead of with a confusing compile error later.
+          if ! grep -q 'data_gmic' "$GMIC_SRC/gmic_stdlib_community.h"; then
+            echo "gmic_stdlib_community.h does not define data_gmic; aborting"
+            exit 1
+          fi
+          cmake gmic-qt-src -B build-gmic-qt \
+            -DCMAKE_PREFIX_PATH="${QT_ROOT_DIR}" \
+            -DBUILD_WITH_QT6=ON \
+            -DGMIC_QT_HOST=none \
+            -DENABLE_SYSTEM_GMIC=OFF \
+            -DGMIC_PATH="$PWD/gmic-qt-src/gmic/src" \
+            -DENABLE_FFTW3=ON \
+            -DENABLE_CURL=ON \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_EXE_LINKER_FLAGS="-no-pie"
+          cmake --build build-gmic-qt --parallel --verbose
+          cp build-gmic-qt/gmic_qt appdir/usr/bin/gmic_photoflare_qt
+
+      # Download linuxdeploy and its Qt plugin into a tools/ subdirectory
+      # so they do not match the *.AppImage upload glob later.
+      - name: Download linuxdeploy
+        run: |
+          mkdir tools
+          wget -nv -P tools \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x tools/*.AppImage
+
+      # linuxdeploy-plugin-qt needs QMAKE to point at the correct Qt 6 qmake
+      # so it can discover Qt plugins and translations.
+      # VERSION is used by linuxdeploy to name the output file.
+      - name: Build AppImage
+        env:
+          QMAKE: ${{ env.QT_ROOT_DIR }}/bin/qmake
+          VERSION: ${{ github.ref_name }}
+        run: |
+          export PATH="$PWD/tools:$PATH"
+          ./tools/linuxdeploy-x86_64.AppImage \
+            --appdir appdir \
+            --plugin qt \
+            --output appimage
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: photoflare-appimage
+          path: '*.AppImage'
+          if-no-files-found: error
+
+      # Attach the AppImage to the GitHub Release when triggered by a tag push.
+      - name: Upload to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: '*.AppImage'

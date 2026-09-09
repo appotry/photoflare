@@ -1,8 +1,8 @@
 {
-    "app-id": "io.photoflare_editor.photoflare",
+    "app-id": "io.photoflare.photoflare",
     "runtime": "org.kde.Platform",
-    "runtime-version": "5.11",
-    "sdk": "org.kde.Platform",
+    "runtime-version": "6.7",
+    "sdk": "org.kde.Sdk",
     "command": "photoflare",
     "modules": [
         {
@@ -24,13 +24,61 @@
             ]
         },
         {
+            "name": "fftw3",
+            "x-todo": "Verify fftw3 sha256 before release.",
+            "buildsystem": "autotools",
+            "config-opts": [
+                "--enable-shared",
+                "--enable-threads",
+                "--enable-openmp"
+            ],
+            "sources": [
+                {
+                    "type": "archive",
+                    "url": "https://fftw.org/fftw-3.3.10.tar.gz",
+                    "sha256": "TODO-verify-sha256"
+                }
+            ]
+        },
+        {
+            "name": "gmic-qt",
+            "buildsystem": "simple",
+            "build-options": {
+                "x-note": "network:true is needed to fetch CImg.h and gmic_stdlib_community.h which are not in the gmic git repo. Not suitable for Flathub submission.",
+                "network": true
+            },
+            "build-commands": [
+                "wget --no-check-certificate --quiet -O gmic/src/CImg.h https://github.com/GreycLab/CImg/raw/v.3.7.5/CImg.h",
+                "make -C gmic/src gmic_stdlib_community.h",
+                "cmake . -B _build -DBUILD_WITH_QT6=ON -DGMIC_QT_HOST=none -DENABLE_SYSTEM_GMIC=OFF -DGMIC_PATH=/run/build/gmic-qt/gmic/src -DENABLE_FFTW3=ON -DENABLE_CURL=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXE_LINKER_FLAGS=-no-pie",
+                "cmake --build _build --parallel 1",
+                "cmake --install _build --prefix /app",
+                "mv /app/bin/gmic_qt /app/bin/gmic_photoflare_qt"
+            ],
+            "sources": [
+                {
+                    "type": "git",
+                    "url": "https://github.com/c-koi/gmic-qt.git",
+                    "commit": "aa4a6f4ab174b37fcdf4df5f94fde0898856523a",
+                    "tag": "v.3.4.2"
+                },
+                {
+                    "type": "git",
+                    "url": "https://github.com/GreycLab/gmic.git",
+                    "dest": "gmic",
+                    "commit": "57137ee00ba76bafe63f3ab759ea9b7b1d1edf0f",
+                    "tag": "v.3.7.5"
+                }
+            ]
+        },
+        {
             "name": "photoflare",
             "buildsystem": "qmake",
             "sources": [
                 {
                     "type": "git",
                     "url": "https://github.com/PhotoFlare/photoflare.git",
-                    "commit": "25447adc0842ee78605df0dd49492e9dd5edc3e0"
+                    "commit": "7c6a966"
                 }
             ]
         }

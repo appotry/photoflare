@@ -39,6 +39,8 @@ public:
     bool antialias();
     int style();
     int arrowStyle();
+    void saveSettings();
+    void loadSettings();
 
 signals:
     void settingsChanged();
@@ -46,6 +48,9 @@ signals:
 private slots:
     void on_arrowCheckBox_clicked(bool checked);
     void on_arrowCheckBox2_clicked(bool checked);
+
+protected:
+    void changeEvent(QEvent *e) override;
 
 private:
     Ui::LineSettingsWidget *ui;

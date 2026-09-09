@@ -39,6 +39,7 @@ aboutDialog::aboutDialog(QWidget *parent) :
     ui->graphicsTextArea->setText(tr(
         "Main icon - Robert BM"
         "<br>Website graphics - Raqasa"
+        "<br>Application icons - Imerion"
         "<br>Application icons - Attari B"
         "<br>Art Designer - Catherine Hegedusich"
         "<br>Advertising - Don Murphy")
@@ -47,19 +48,20 @@ aboutDialog::aboutDialog(QWidget *parent) :
     ui->translateTextArea->setText(tr(
         "FR - Ludovic, N."
         "<br>NL - Freek P."
-        "<br>DE - Steffen G."
+        "<br>DE - Steffen G., Gerd M. Hofmann"
         "<br>zh_TW - Coolshou"
         "<br>zh_CN - Nichts H."
         "<br>CS - Pafri"
-        "<br>pt_BR - eltonfabricio10"
-        "<br>pt_PT - eltonfabricio10"
+        "<br>PT_BR - eltonfabricio10"
+        "<br>PT_PT - eltonfabricio10"
         "<br>SV - eson57"
         "<br>RU - Alex K."
         "<br>ID - triyanwn"
         "<br>ES - darkshram"
         "<br>JA - hmatrjp"
         "<br>TR - sabriunal"
-        "<br>KO - VenusGirl")
+        "<br>KO - VenusGirl"
+        "<br>PL - MikolajQ")
     );
     ui->contribTextArea->setText(tr(
         "eltonfabricio10 - Code"

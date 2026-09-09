@@ -38,6 +38,11 @@
 #include <QImageReader>
 #include <QInputDialog>
 #include <QSysInfo>
+#include <QProcess>
+#include <QTemporaryFile>
+#include <QDir>
+#include <QSortFilterProxyModel>
+#include <QStandardPaths>
 
 #include "./tools/PaintBrushTool.h"
 #include "./tools/PaintBrushAdvTool.h"
@@ -95,8 +100,17 @@
 #include "workers/filterworkermp.h"
 #include "workers/FloodFillWorker.h"
 
+#include <QTranslator>
+#include <QLibraryInfo>
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
+#include "plugins/PluginManager.h"
+#include "workers/pluginfilterworker.h"
+
+#include <QSlider>
+#include <QCheckBox>
+#include <QFormLayout>
+#include <QDialogButtonBox>
 
 #define PAINT_BRUSH ToolManager::instance()->paintBrush()
 #define PAINT_BRUSH_ADV ToolManager::instance()->paintBrushAdv()
@@ -114,7 +128,15 @@
 
 namespace
 {
-    const QString UNTITLED_TAB_NAME = QObject::tr("Untitled");
+    // Evaluated at each call site so it picks up live language changes
+    inline QString untitledTabName() { return QObject::tr("Untitled"); }
+
+    // Common UI spacing values, kept in one place so dock/status bar
+    // padding stays consistent as the layout evolves.
+    constexpr int kDockContentMargin = 4;
+    constexpr int kDockContentSpacing = 2;
+    constexpr int kStatusBarBatchLabelRightMargin = 100;
+    constexpr int kStatusBarSelectionLabelLeftMargin = 10;
 }
 
 MainWindow::MainWindow() :
@@ -127,10 +149,11 @@ MainWindow::MainWindow() :
     FilterManager::instance();
 
     ui->setupUi(this);
-    applyIconTheme();
 
     // Add Settings Widgets to the Dock
     addSettingsWidgets();
+
+    applyIconTheme();
 
     // Connect signals to the various Tools
     connectTools();
@@ -152,6 +175,9 @@ MainWindow::MainWindow() :
 
     // Enable drag-and-drop of image files onto the main window
     setAcceptDrops(true);
+
+    // Load external plugins from the plugins/ directory
+    loadPlugins();
 }
 
 MainWindow::~MainWindow()
@@ -209,11 +235,11 @@ void MainWindow::setupWorkspace()
 
     // Setup status text defaults
     batchLbl = new QLabel(tr("Ready"));
-    batchLbl->setStyleSheet("margin:0 100 0 0");
+    batchLbl->setContentsMargins(0, 0, kStatusBarBatchLabelRightMargin, 0);
     ui->statusBar->addWidget(batchLbl);
 
     selectionLbl = new QLabel();
-    selectionLbl->setStyleSheet("margin:0 0 0 10");
+    selectionLbl->setContentsMargins(kStatusBarSelectionLabelLeftMargin, 0, 0, 0);
     ui->statusBar->addWidget(selectionLbl);
 
     // Disable undo/redo buttons on startup
@@ -225,7 +251,11 @@ void MainWindow::setupWorkspace()
     ui->actionToolpalette->setChecked(true);
 
     // Pointer tool selected by default
+    // (overridden in restoreGeometryState if a saved tool exists)
     on_toolButtonPointer_clicked();
+
+    // Load the translator now that the window is constructed
+    loadTranslator(SETTINGS->getUserLanguage());
 }
 
 void MainWindow::addZoomCombo()
@@ -326,8 +356,8 @@ void MainWindow::addSettingsWidgets()
     // Create a proper vertical layout on the dock's content widget so settings
     // widgets stack correctly and don't overlap inside QDockWidgetLayout.
     QVBoxLayout *layout = new QVBoxLayout(ui->dockWidgetContents);
-    layout->setContentsMargins(4, 4, 4, 4);
-    layout->setSpacing(2);
+    layout->setContentsMargins(kDockContentMargin, kDockContentMargin, kDockContentMargin, kDockContentMargin);
+    layout->setSpacing(kDockContentSpacing);
 
     m_ptSettingsWidget = new PointerSettingsWidget(ui->dockWidgetContents);
     layout->addWidget(m_ptSettingsWidget);
@@ -396,6 +426,9 @@ void MainWindow::applyThreadedFilter(QString filterName, double dV, std::functio
     if (widget)
         widget->setEnabled(false);
     connect(thread, SIGNAL(started()), worker, SLOT(process()));
+    connect(worker, &FilterWorker::filterError, this, [this](const QString &message) {
+        showError(message);
+    });
     connect(worker, &FilterWorker::filterProcessFinished, this, [this, widget, postProcess, original](QImage image) {
         if (widget) {
             applyFilteredImage(widget, original, image);
@@ -428,6 +461,9 @@ void MainWindow::applyThreadedFilterMP(QString filterName, double dV)
     if (widget)
         widget->setEnabled(false);
     connect(thread, SIGNAL(started()), worker, SLOT(process()));
+    connect(worker, &FilterWorkerMP::filterError, this, [this](const QString &message) {
+        showError(message);
+    });
     connect(worker, &FilterWorkerMP::filterProcessFinished, this, [this, widget, original](QImage image) {
         if (widget) {
             applyFilteredImage(widget, original, image);
@@ -439,6 +475,215 @@ void MainWindow::applyThreadedFilterMP(QString filterName, double dV)
 
     batchLbl->setText(tr("Working..."));
 }
+
+/*
+
+    | PLUGIN SYSTEM — AppContext implementation |
+
+*/
+
+QImage* MainWindow::currentImage()
+{
+    PaintWidget* w = getCurrentPaintWidget();
+    if (!w) return nullptr;
+    m_pluginImageCache = w->image();
+    return &m_pluginImageCache;
+}
+
+void MainWindow::markCanvasDirty()
+{
+    PaintWidget* w = getCurrentPaintWidget();
+    if (!w || m_pluginImageCache.isNull()) return;
+    const QImage original = w->image();
+    applyFilteredImage(w, original, m_pluginImageCache);
+}
+
+void MainWindow::pushUndoState(const QString& /*label*/)
+{
+    // No-op for filter plugins — applyFilteredImage() -> setImage() handles undo.
+}
+
+void MainWindow::registerMenuAction(const QString& path, QAction* action)
+{
+    ensureMenuPath(path)->addAction(action);
+}
+
+QMenu* MainWindow::ensureMenuPath(const QString& path)
+{
+    const QStringList parts = path.split('/');
+    QMenu* current = nullptr;
+    for (QAction* a : menuBar()->actions()) {
+        if (a->text().remove('&') == parts.first()) {
+            current = a->menu();
+            break;
+        }
+    }
+    if (!current)
+        current = menuBar()->addMenu(parts.first());
+
+    for (int i = 1; i < parts.size() - 1; ++i) {
+        const QString& seg = parts.at(i);
+        QMenu* sub = nullptr;
+        for (QAction* a : current->actions()) {
+            if (a->menu() && a->text().remove('&') == seg) {
+                sub = a->menu();
+                break;
+            }
+        }
+        if (!sub)
+            sub = current->addMenu(seg);
+        current = sub;
+    }
+    return current;
+}
+
+void MainWindow::registerDockPanel(const QString& title, QWidget* panel)
+{
+    auto* dock = new QDockWidget(title, this);
+    dock->setWidget(panel);
+    addDockWidget(Qt::RightDockWidgetArea, dock);
+}
+
+void MainWindow::showStatusMessage(const QString& msg, int ms)
+{
+    statusBar()->showMessage(msg, ms);
+}
+
+QSettings& MainWindow::pluginSettings(const QString& id)
+{
+    if (!m_pluginSettings.contains(id))
+        m_pluginSettings[id] = new QSettings("Photoflare", id, this);
+    return *m_pluginSettings[id];
+}
+
+/*
+
+    | PLUGIN SYSTEM — Loading & dialogs |
+
+*/
+
+void MainWindow::loadPlugins()
+{
+    m_pluginManager = new PluginManager(this, this);
+
+    connect(m_pluginManager, &PluginManager::pluginLoadError,
+            this, [](const QString& path, const QString& err) {
+        qWarning() << "Plugin load error:" << path << err;
+    });
+
+    m_pluginManager->scanDirectories({
+        qApp->applicationDirPath() + "/plugins",
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/plugins"
+    });
+
+    for (IFilterPlugin* f : m_pluginManager->filterPlugins()) {
+        auto* action = new QAction(f->displayName(), this);
+        connect(action, &QAction::triggered, this, [this, f] { showFilterDialog(f); });
+        // Remap plugin-supplied path: replace the first segment with "Plugin Filters"
+        // e.g. "Filters/Noise" -> "Plugin Filters/Noise"
+        QString path = f->menuPath();
+        const int slash = path.indexOf('/');
+        if (slash != -1)
+            path = QStringLiteral("Plugin Filters") + path.mid(slash);
+        else
+            path = QStringLiteral("Plugin Filters");
+        registerMenuAction(path, action);
+    }
+}
+
+void MainWindow::showFilterDialog(IFilterPlugin* plugin)
+{
+    PaintWidget* w = getCurrentPaintWidget();
+    if (!w) return;
+
+    const QImage original = w->image();
+
+    auto* dlg = new QDialog(this);
+    dlg->setWindowTitle(plugin->displayName());
+    auto* layout = new QVBoxLayout(dlg);
+
+    QHash<QString, QWidget*> paramWidgets;
+    for (const PluginParam& p : plugin->parameters()) {
+        auto* row = new QHBoxLayout();
+        row->addWidget(new QLabel(p.label, dlg));
+        QWidget* input = nullptr;
+        if (p.type == PluginParam::Float || p.type == PluginParam::Int) {
+            const int scale = (p.type == PluginParam::Float) ? 100 : 1;
+            auto* slider = new QSlider(Qt::Horizontal, dlg);
+            slider->setRange(qRound(p.minValue.toDouble() * scale),
+                             qRound(p.maxValue.toDouble() * scale));
+            slider->setValue(qRound(p.defaultValue.toDouble() * scale));
+            input = slider;
+        } else if (p.type == PluginParam::Bool) {
+            auto* cb = new QCheckBox(dlg);
+            cb->setChecked(p.defaultValue.toBool());
+            input = cb;
+        }
+        if (input) { row->addWidget(input); paramWidgets[p.id] = input; }
+        layout->addLayout(row);
+    }
+
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dlg);
+    layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, dlg, &QDialog::reject);
+
+    if (dlg->exec() != QDialog::Accepted) {
+        dlg->deleteLater();
+        return;
+    }
+
+    const QVariantMap params = collectParams(plugin, paramWidgets);
+    dlg->deleteLater();
+
+    w->setEnabled(false);
+    batchLbl->setText(tr("Working..."));
+
+    QThread *thread = new QThread(this);
+    PluginFilterWorker *worker = new PluginFilterWorker(plugin, original, params);
+    worker->moveToThread(thread);
+
+    connect(thread, &QThread::started, worker, &PluginFilterWorker::process);
+    connect(worker, &PluginFilterWorker::filterProcessFinished,
+            this, [this, w, original](QImage image) {
+        applyFilteredImage(w, original, image);
+        w->setEnabled(true);
+        batchLbl->setText(tr("Ready"));
+    });
+    connect(worker, &PluginFilterWorker::filterProcessFinished,
+            thread, &QThread::quit);
+    connect(thread, &QThread::finished, worker, &QObject::deleteLater);
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+
+    thread->start();
+}
+
+QVariantMap MainWindow::collectParams(IFilterPlugin* plugin,
+                                       const QHash<QString, QWidget*>& widgets)
+{
+    QVariantMap params;
+    for (const PluginParam& p : plugin->parameters()) {
+        QWidget* w = widgets.value(p.id);
+        if (!w) { params[p.id] = p.defaultValue; continue; }
+        if (p.type == PluginParam::Float) {
+            params[p.id] = qobject_cast<QSlider*>(w)->value() / 100.0;
+        } else if (p.type == PluginParam::Int) {
+            params[p.id] = qobject_cast<QSlider*>(w)->value();
+        } else if (p.type == PluginParam::Bool) {
+            params[p.id] = qobject_cast<QCheckBox*>(w)->isChecked();
+        } else {
+            params[p.id] = p.defaultValue;
+        }
+    }
+    return params;
+}
+
+/*
+
+    | FILTER WORKER |
+
+*/
 
 void MainWindow::applyFilteredImage(PaintWidget *widget, const QImage &original, const QImage &filtered)
 {
@@ -486,7 +731,7 @@ void MainWindow::on_actionOpen_triggered()
 {
     const QString filters =
         tr("Image Files") +
-        "(*.png *.PNG *.jpg *.jpeg *.JPG *.JPEG *.gif *.GIF *.tif *.tiff *.TIF *.TIFF *.bmp *.BMP *.ico *.ICO *.pbm *.PBM *.pgm *.PGM *.ppm *.PPM);;"
+        "(*.png *.PNG *.jpg *.jpeg *.JPG *.JPEG *.gif *.GIF *.tif *.tiff *.TIF *.TIFF *.bmp *.BMP *.ico *.ICO *.pbm *.PBM *.pgm *.PGM *.ppm *.PPM *.webp);;"
         "PNG(*.png *.PNG);;"
         "JPEG(*.jpg *.jpeg *.JPG *.JPEG);;"
         "GIF(*.gif *.GIF);;"
@@ -495,22 +740,29 @@ void MainWindow::on_actionOpen_triggered()
         "ICO(*.ico *.ICO);;"
         "PBM(*.pbm *.PBM);;"
         "PGM(*.pgm *.PGM);;"
-        "PPM(*.ppm *.PPM);;" +
+        "PPM(*.ppm *.PPM);;"
+        "WEBP(*.webp *.WEBP);;" +
         tr("All Files") + "(*)";
-/*
- *  Previously supported RAW formats
-    "ARW (*.arw *.srf *.sr2);;"
-    "BAY (*.bay);;"
-    "CR2 (*.crw *.cr2);;"
-    "DCS (*.dcs *.dcr *.drf *.k25 *.kdc);;"
-    "MOS (*.mos);;"
-    "NEF (*.nef *.nrw);;"
-    "RAW (*.raw *.rw2)"));
-*/
+
+    // Proxy model that filters out dot-prefixed files/dirs cross-platform.
+    // QDir::Hidden is not used because on Windows it matches the OS hidden
+    // attribute, not dot-prefixed names.
+    class HideDotFilesProxy : public QSortFilterProxyModel {
+    public:
+        using QSortFilterProxyModel::QSortFilterProxyModel;
+    protected:
+        bool filterAcceptsRow(int row, const QModelIndex &parent) const override {
+            const QString name = sourceModel()
+                ->data(sourceModel()->index(row, 0, parent), Qt::DisplayRole)
+                .toString();
+            return !name.startsWith(QLatin1Char('.'));
+        }
+    };
 
     QFileDialog dialog(this, tr("Open File"), SETTINGS->getOpenFolder(), filters);
     dialog.setFileMode(QFileDialog::ExistingFiles);
     dialog.setOption(QFileDialog::DontUseNativeDialog, true);
+    dialog.setProxyModel(new HideDotFilesProxy(&dialog));
 
     // Add an image preview panel to the right side of the dialog layout
     QLabel *previewLabel = new QLabel(tr("No Preview"), &dialog);
@@ -706,6 +958,16 @@ void MainWindow::on_actionSave_As_triggered()
         filters << tr("ppm (*.ppm)");
         filters << tr("ico (*.ico)");
 
+        // Append exporter plugin formats
+        if (m_pluginManager) {
+            for (IExporterPlugin* e : m_pluginManager->exporterPlugins()) {
+                QStringList exts;
+                for (const QString& ext : e->supportedExtensions())
+                    exts << "*." + ext;
+                filters << QString("%1 (%2)").arg(e->formatName(), exts.join(" "));
+            }
+        }
+
         QString defaultFilter;
         if (!suffix.isEmpty())
         {
@@ -762,11 +1024,35 @@ void MainWindow::on_actionSave_As_triggered()
             }
         }
         // Save image with the selected quality value
+
+        // Check if an exporter plugin handles this extension first
+        if (m_pluginManager) {
+            const QString ext = QFileInfo(fileName).suffix().toLower();
+            for (IExporterPlugin* e : m_pluginManager->exporterPlugins()) {
+                if (e->supportedExtensions().contains(ext)) {
+                    QString err;
+                    if (!e->exportImage(widget->image(), fileName, {}, err))
+                        showError(err);
+                    else {
+                        SETTINGS->addRecentFile(fileName);
+                        updateRecentFilesMenu();
+                        widget->setImagePath(fileName);
+                        ui->mdiArea->currentSubWindow()->setWindowTitle(fileName + " [*]");
+                        ui->mdiArea->currentSubWindow()->setWindowModified(false);
+                    }
+                    return;
+                }
+            }
+        }
+
         if (saveImage(fileName, quality))
         {
             // Update recents
             SETTINGS->addRecentFile(fileName);
             updateRecentFilesMenu();
+            widget->setImagePath(fileName);
+            ui->mdiArea->currentSubWindow()->setWindowTitle(fileName + " [*]");
+            ui->mdiArea->currentSubWindow()->setWindowModified(false);
         }
         else
             showError(tr("Unable to save image."));
@@ -777,7 +1063,7 @@ void MainWindow::saveContent()
 {
     QString currentFileName = ui->mdiArea->currentSubWindow()->windowTitle();
 
-    if(currentFileName.contains(UNTITLED_TAB_NAME + " [*]"))
+    if(currentFileName.contains(untitledTabName() + " [*]"))
     {
         on_actionSave_As_triggered();
     }
@@ -979,8 +1265,34 @@ void MainWindow::onPaste()
     if (widget)
     {
         QClipboard *clipboard = QApplication::clipboard();
-        on_toolButtonPointer_clicked();
-        MOUSE_POINTER->setOverlayImage(clipboard->image());
+        const QMimeData *mimeData = clipboard->mimeData();
+        if (mimeData->hasImage())
+        {
+            on_toolButtonPointer_clicked();
+            MOUSE_POINTER->setOverlayImage(clipboard->image());
+        }
+        else if (mimeData->hasUrls())
+        {
+            // Clipboard holds file references (e.g. a file copied in a file
+            // browser) rather than raw image data. Load the first local
+            // image file and paste it as an overlay onto the canvas.
+            for (const QUrl &url : mimeData->urls())
+            {
+                if (!url.isLocalFile())
+                    continue;
+                const QString fileName = prepareFile(url.toLocalFile());
+                if (!fileName.isEmpty())
+                {
+                    QImage image(fileName);
+                    if (!image.isNull())
+                    {
+                        on_toolButtonPointer_clicked();
+                        MOUSE_POINTER->setOverlayImage(image);
+                    }
+                }
+                break;
+            }
+        }
     }
     else
     {
@@ -1000,15 +1312,26 @@ void MainWindow::on_actionPaste_triggered()
 
 void MainWindow::on_actionPaste_as_new_image_triggered()
 {
-    on_actionCopy_triggered();  
     QClipboard *clipboard = QApplication::clipboard();
-    if(clipboard->mimeData()->hasImage())
+    const QMimeData *mimeData = clipboard->mimeData();
+    if(mimeData->hasImage())
     {
         addPaintWidget(createPaintWidget(clipboard->image().size(),Qt::white));
         PaintWidget *widget = getCurrentPaintWidget();
         if (widget)
         {
             widget->setImage(clipboard->image());
+        }
+    }
+    else if (mimeData->hasUrls())
+    {
+        // Clipboard holds file references (e.g. a file copied in a file
+        // browser) rather than raw image data. Open each local image file
+        // as a new tab, same as dropping files onto the window.
+        for (const QUrl &url : mimeData->urls())
+        {
+            if (url.isLocalFile())
+                openFile(url.toLocalFile());
         }
     }
 }
@@ -1296,7 +1619,15 @@ void MainWindow::onTransparentAccepted()
 {
     PaintWidget *widget = getCurrentPaintWidget();
     if (widget)
-        widget->setImage(FilterManager::instance()->floodFillOpacity(widget->image(), transparentDialog->color(), transparentDialog->tolerance()));
+    {
+        try {
+            widget->setImage(FilterManager::instance()->floodFillOpacity(widget->image(), transparentDialog->color(), transparentDialog->tolerance()));
+        } catch (const std::exception &e) {
+            showError(tr("Transparent colour failed: %1").arg(QString::fromUtf8(e.what())));
+        } catch (...) {
+            showError(tr("Transparent colour failed with an unknown error."));
+        }
+    }
 }
 
 void MainWindow::onTransparentRejected()
@@ -1310,7 +1641,15 @@ void MainWindow::onPreviewTransparent(QColor color, int tolerance)
 {
     PaintWidget *widget = getCurrentPaintWidget();
     if (widget)
-        widget->setImageOriginal(FilterManager::instance()->floodFillOpacity(origImage, color, tolerance));
+    {
+        try {
+            widget->setImageOriginal(FilterManager::instance()->floodFillOpacity(origImage, color, tolerance));
+        } catch (const std::exception &e) {
+            showError(tr("Transparent colour failed: %1").arg(QString::fromUtf8(e.what())));
+        } catch (...) {
+            showError(tr("Transparent colour failed with an unknown error."));
+        }
+    }
 }
 
 void MainWindow::onTextToolFinished()
@@ -1861,9 +2200,94 @@ void MainWindow::on_actionShow_rulers_triggered()
         bool visible = !widget->isRulersVisible();
         widget->showRulers(visible);
         ui->actionShow_rulers->setChecked(visible);
+        SETTINGS->setValue("showRulers", visible);
     } else {
         ui->actionShow_rulers->setChecked(false);
     }
+}
+
+void MainWindow::on_actionGmicQt_triggered()
+{
+    PaintWidget *widget = getCurrentPaintWidget();
+    if (!widget) return;
+
+    // Save current canvas to a temp PNG file
+    QTemporaryFile inputFile(QDir::tempPath() + "/photoflare_gmic_in_XXXXXX.png");
+    inputFile.setAutoRemove(false);
+    if (!inputFile.open()) {
+        QMessageBox::warning(this, tr("G'MIC-Qt"), tr("Failed to create temporary input file."));
+        return;
+    }
+    const QString inputPath = inputFile.fileName();
+    inputFile.close();
+    if (!widget->image().save(inputPath, "PNG")) {
+        QFile::remove(inputPath);
+        QMessageBox::warning(this, tr("G'MIC-Qt"), tr("Failed to save image for G'MIC-Qt."));
+        return;
+    }
+
+    // Output temp file
+    const QString outputPath = inputPath + "_out.png";
+
+    // Locate the gmic-qt binary. Check next to the application executable first
+    // (preferred, namespaced name), then fall back to PATH.
+    // On Windows the build bat renames the output to gmic_photoflare_qt.exe.
+    // A plain gmic_qt / gmic_qt.exe on PATH is also accepted as a fallback so
+    // that users who have a system-installed gmic-qt can still use it.
+#ifdef Q_OS_WIN
+    const QString gmicBinName         = "gmic_photoflare_qt.exe";
+    const QString gmicBinNameFallback  = "gmic_qt.exe";
+#else
+    const QString gmicBinName         = "gmic_photoflare_qt";
+    const QString gmicBinNameFallback  = "gmic_qt";
+#endif
+    QString gmicBin = QDir(QCoreApplication::applicationDirPath()).filePath(gmicBinName);
+    if (!QFile::exists(gmicBin)) {
+        // Try the namespaced name on PATH, then the plain upstream name.
+        if (!QStandardPaths::findExecutable(gmicBinName).isEmpty()) {
+            gmicBin = gmicBinName;
+        } else if (!QStandardPaths::findExecutable(gmicBinNameFallback).isEmpty()) {
+            gmicBin = gmicBinNameFallback;
+        } else {
+            QMessageBox::warning(this, tr("G'MIC-Qt"),
+                tr("gmic_photoflare_qt not found. Please install G'MIC-Qt or place the gmic_photoflare_qt binary next to photoflare."));
+            QFile::remove(inputPath);
+            return;
+        }
+    }
+
+    // Launch gmic_qt with the input image; options must come before the input file
+    // because the standalone host's arg parser greedily consumes all remaining
+    // positional args once it sees the first non-option argument.
+    QProcess proc;
+    proc.start(gmicBin, {"-o", outputPath, inputPath});
+    proc.waitForFinished(-1);
+
+    if (proc.exitCode() != 0) {
+        // Non-zero exit = actual failure (bad args, crash, etc.)
+        QMessageBox::warning(this, tr("G'MIC-Qt"),
+            tr("gmic_qt.exe failed (exit code %1):\n%2")
+            .arg(proc.exitCode())
+            .arg(QString::fromLocal8Bit(proc.readAllStandardError())));
+        QFile::remove(inputPath);
+        QFile::remove(outputPath);
+        return;
+    }
+
+    if (!QFile::exists(outputPath)) {
+        // User cancelled the G'MIC dialog — nothing to do
+        QFile::remove(inputPath);
+        return;
+    }
+
+    // Load result and apply via undo-aware helper
+    QImage result(outputPath);
+    if (!result.isNull()) {
+        applyFilteredImage(widget, widget->image(), result);
+    }
+
+    QFile::remove(inputPath);
+    QFile::remove(outputPath);
 }
 
 void MainWindow::getPrevZoomFromScale(QString scaletext)
@@ -2042,19 +2466,101 @@ void MainWindow::batchProcess_batchProgress(int index,int total)
 void MainWindow::on_actionPreferences_triggered()
 {
     prefsDialog = new PrefsDialog(this);
-    QObject::connect(prefsDialog, SIGNAL(safeQuitApp()), this, SLOT(onSafeQuitApp()));
     QObject::connect(prefsDialog, SIGNAL(iconThemeChanged()), this, SLOT(applyIconTheme()));
+    QObject::connect(prefsDialog, &PrefsDialog::languageChanged, this, &MainWindow::onLanguageChanged);
+    QObject::connect(prefsDialog, &PrefsDialog::dockLayoutChanged, this, &MainWindow::onDockLayoutChanged);
     prefsDialog->show();
 }
 
-void MainWindow::onSafeQuitApp()
+void MainWindow::loadTranslator(const QString &langCode)
 {
-    on_actionQuit_triggered();
+    if (m_translator) {
+        qApp->removeTranslator(m_translator);
+        delete m_translator;
+        m_translator = nullptr;
+    }
+    if (m_qtTranslator) {
+        qApp->removeTranslator(m_qtTranslator);
+        delete m_qtTranslator;
+        m_qtTranslator = nullptr;
+    }
+
+    m_translator = new QTranslator(this);
+    QStringList paths = QStandardPaths::standardLocations(QStandardPaths::AppDataLocation);
+    paths.prepend(QCoreApplication::applicationDirPath());
+    #ifdef APP_PREFIX
+        // Hardcoded fallback in case XDG_DATA_DIRS doesn't include the install prefix's share dir.
+        paths.append(QStringLiteral(APP_PREFIX) + "/share/" + QCoreApplication::applicationName());
+    #endif
+    for (int i = 0; i < paths.length(); i++) {
+        QFileInfo check_file(paths[i] + "/languages/" + langCode + ".qm");
+        if (check_file.exists() && check_file.isFile()) {
+            if (m_translator->load(langCode + ".qm", paths[i] + "/languages/")) {
+                break;
+            }
+        }
+    }
+    qApp->installTranslator(m_translator);
+
+    // Qt's own dialogs and standard buttons (e.g. the "OK"/"Cancel" text on
+    // QDialogButtonBox, QMessageBox, QColorDialog, QFileDialog) are translated
+    // via Qt's own "qtbase" catalog, not the application's translation file.
+    // Without loading it, those strings stay in English even when the rest
+    // of the UI is translated. The .pro file bundles qtbase_<lang>.qm next to
+    // our own .qm files so deployed builds (no Qt SDK installed) still work;
+    // fall back to the Qt SDK's own translations directory for dev builds
+    // where that bundling step hasn't been (re-)run yet.
+    m_qtTranslator = new QTranslator(this);
+    bool qtTranslatorLoaded = false;
+    for (int i = 0; i < paths.length() && !qtTranslatorLoaded; i++) {
+        QFileInfo check_file(paths[i] + "/languages/qtbase_" + langCode + ".qm");
+        if (check_file.exists() && check_file.isFile()) {
+            qtTranslatorLoaded = m_qtTranslator->load(QStringLiteral("qtbase_") + langCode, paths[i] + "/languages/");
+        }
+    }
+    if (!qtTranslatorLoaded) {
+        const QString qtTranslationsPath = QLibraryInfo::path(QLibraryInfo::TranslationsPath);
+        qtTranslatorLoaded = m_qtTranslator->load(QLocale(langCode), QStringLiteral("qtbase"), QStringLiteral("_"), qtTranslationsPath)
+                          || m_qtTranslator->load(QStringLiteral("qtbase_") + langCode, qtTranslationsPath);
+    }
+    if (qtTranslatorLoaded) {
+        qApp->installTranslator(m_qtTranslator);
+    }
+}
+
+void MainWindow::onLanguageChanged(const QString &langCode)
+{
+    loadTranslator(langCode);
+}
+
+void MainWindow::onDockLayoutChanged()
+{
+    if(SETTINGS->getDockLayout() == "1")
+    {
+        addDockWidget(Qt::LeftDockWidgetArea, ui->dockWidget_palette);
+        addDockWidget(Qt::LeftDockWidgetArea, ui->dockWidgetSettings);
+    }
+    else
+    {
+        addDockWidget(Qt::RightDockWidgetArea, ui->dockWidget_palette);
+        addDockWidget(Qt::RightDockWidgetArea, ui->dockWidgetSettings);
+    }
+}
+
+void MainWindow::changeEvent(QEvent *e)
+{
+    QMainWindow::changeEvent(e);
+    if (e->type() == QEvent::LanguageChange) {
+        ui->retranslateUi(this);
+        batchLbl->setText(tr("Ready"));
+    }
 }
 
 void MainWindow::on_actionPlugins_triggered()
 {
-    PluginDialog dialog(this);
+    PluginDialog dialog(m_pluginManager, this);
+    connect(&dialog, &PluginDialog::filterRequested,
+            this, &MainWindow::showFilterDialog);
     dialog.exec();
 }
 
@@ -2775,6 +3281,37 @@ void MainWindow::setWindowSize()
         ui->actionFilterbar->setChecked(ui->toolBar->isVisible());
         ui->actionToolpalette->setChecked(ui->dockWidget_palette->isVisible());
     }
+
+    // Restore primary and secondary colours.
+    ui->colorBoxWidget->setPrimaryColor(SETTINGS->getPrimaryColor());
+    ui->colorBoxWidget->setSecondaryColor(SETTINGS->getSecondaryColor());
+
+    // Restore tool settings panel state.
+    m_ptSettingsWidget->loadSettings();
+    m_pbSettingsWidget->loadSettings();
+    m_pbAdvSettingsWidget->loadSettings();
+    m_scSettingsWidget->loadSettings();
+    m_lineSettingsWidget->loadSettings();
+    m_magicWandSettingsWidget->loadSettings();
+    m_stampSettingsWidget->loadSettings();
+    m_blurSettingsWidget->loadSettings();
+    m_eraserSettingsWidget->loadSettings();
+    m_smudgeSettingsWidget->loadSettings();
+    // Apply loaded settings to all tools (checkboxes don't trigger settingsChanged on setChecked).
+    onPointerToolSettingsChanged();
+    onPaintBrushSettingsChanged();
+    onPaintBrushAdvSettingsChanged();
+    onSprayCanSettingsChanged();
+    onLineSettingsChanged();
+    onMagicWandSettingsChanged();
+    onStampSettingsChanged();
+    onBlurSettingsChanged();
+    onEraserSettingsChanged();
+    onSmudgeSettingsChanged();
+
+    // Restore selected tool.
+    m_toolSelected = SETTINGS->getSelectedTool();
+    refreshTools();
 }
 
 void MainWindow::addChildWindow(PaintWidget *widget)
@@ -2782,7 +3319,7 @@ void MainWindow::addChildWindow(PaintWidget *widget)
     ui->mdiArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     ui->mdiArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     QMdiSubWindow *mdiSubWindow = ui->mdiArea->addSubWindow(widget);
-    QString title = widget->imagePath().isEmpty() ? UNTITLED_TAB_NAME : widget->imagePath();
+    QString title = widget->imagePath().isEmpty() ? untitledTabName() : widget->imagePath();
     title = title + " [*]";
     mdiSubWindow->setWindowTitle(title);
     mdiSubWindow->installEventFilter(this);
@@ -2873,6 +3410,25 @@ void MainWindow::saveGeometryState()
     }
     // Save toolbar and dock widget positions/configuration.
     SETTINGS->setMainWindowState(this->saveState());
+
+    // Save primary and secondary colours.
+    SETTINGS->setPrimaryColor(ui->colorBoxWidget->primaryColor());
+    SETTINGS->setSecondaryColor(ui->colorBoxWidget->secondaryColor());
+
+    // Save selected tool.
+    SETTINGS->setSelectedTool(m_toolSelected);
+
+    // Save tool settings panel state.
+    m_ptSettingsWidget->saveSettings();
+    m_pbSettingsWidget->saveSettings();
+    m_pbAdvSettingsWidget->saveSettings();
+    m_scSettingsWidget->saveSettings();
+    m_lineSettingsWidget->saveSettings();
+    m_magicWandSettingsWidget->saveSettings();
+    m_stampSettingsWidget->saveSettings();
+    m_blurSettingsWidget->saveSettings();
+    m_eraserSettingsWidget->saveSettings();
+    m_smudgeSettingsWidget->saveSettings();
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -2940,6 +3496,7 @@ PaintWidget *MainWindow::createPaintWidget(const QSize &imageSize, const QColor 
 void MainWindow::addPaintWidget(PaintWidget *widget)
 {
     widget->autoScale();
+    widget->showRulers(SETTINGS->value("showRulers", true).toBool());
 
     connect(widget, &PaintWidget::zoomChanged, [this] (float scale) {
         this->zoomCombo->setItemText(0, QString::number(static_cast<int>(scale*100)).append("%"));
@@ -3329,17 +3886,18 @@ void MainWindow::applyIconTheme()
                        qApp->palette().color(QPalette::Window).lightness() < 128);
 
     // Toolpalette checked/hover style
-    if (dark) {
-        ui->dockWidgetContentsToolpalette->setStyleSheet(
-            "QToolButton { border: none; }"
-            "QToolButton:hover   { background: #555; border-radius:4px; border: 1px solid #666; }"
-            "QToolButton:checked { background: #555; border-radius:4px; border: 1px solid #444; }");
-    } else {
-        ui->dockWidgetContentsToolpalette->setStyleSheet(
-            "QToolButton { border: none; }"
-            "QToolButton:hover   { background: #ddd; border-radius:4px; border: 1px solid #eee; }"
-            "QToolButton:checked { background: #ddd; border-radius:4px; border: 1px solid #c0c2c2; }");
-    }
+    const QString darkToolButtonStyle =
+        "QToolButton { border: none; }"
+        "QToolButton:hover   { background: #555; border-radius:4px; border: 1px solid #666; }"
+        "QToolButton:checked { background: #555; border-radius:4px; border: 1px solid #444; }";
+    const QString lightToolButtonStyle =
+        "QToolButton { border: none; }"
+        "QToolButton:hover   { background: #ddd; border-radius:4px; border: 1px solid #eee; }"
+        "QToolButton:checked { background: #ddd; border-radius:4px; border: 1px solid #c0c2c2; }";
+    const QString &toolButtonStyle = dark ? darkToolButtonStyle : lightToolButtonStyle;
+
+    ui->dockWidgetContentsToolpalette->setStyleSheet(toolButtonStyle);
+    ui->dockWidgetContents->setStyleSheet(toolButtonStyle);
     // Toolbar 1 actions
     ui->actionNew->setIcon(QIcon(iconPath(":/icons/assets/icons/toolbar1/new.png", dark)));
     ui->actionOpen->setIcon(QIcon(iconPath(":/icons/assets/icons/toolbar1/open.png", dark)));
@@ -3404,4 +3962,6 @@ void MainWindow::applyIconTheme()
     ui->toolButtonStamp->setIcon(QIcon(iconPath(":/toolpalette/assets/toolpalette_icons/Stamp.png", dark)));
     ui->toolButtonPaintBucket->setIcon(QIcon(iconPath(":/toolpalette/assets/toolpalette_icons/Bucket.png", dark)));
     ui->toolButtonDropper->setIcon(QIcon(iconPath(":/toolpalette/assets/toolpalette_icons/ColourPicker.png", dark)));
+    if (m_ptSettingsWidget)
+        m_ptSettingsWidget->setIconTheme(dark);
 }

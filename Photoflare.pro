@@ -1,7 +1,7 @@
 lessThan(QT_MAJOR_VERSION, 6) {
     error("This project requires Qt 6.4.0 or later")
 }
-isEqual(QT_MAJOR_VERSION, 6) : lessThan(QT_MINOR_VERSION, 5) {
+isEqual(QT_MAJOR_VERSION, 6) : lessThan(QT_MINOR_VERSION, 4) {
     error("This project requires Qt 6.4.0 or later")
 }
 
@@ -26,6 +26,12 @@ win32 {
     RC_ICONS += assets/light/pixmaps/logo.ico
 }
 
+# Suppress warnings from vendored third-party headers we don't control.
+win32-msvc {
+    # C4828: illegal character in GraphicsMagick's cdl.h (non-UTF-8 byte in a vendored header)
+    QMAKE_CXXFLAGS += /wd4828
+}
+
 # Project settings for Linux and Hurd. Adjust the paths as needed on your system.
 linux|hurd {
     INCLUDEPATH += /usr/include/GraphicsMagick
@@ -34,19 +40,20 @@ linux|hurd {
     LIBS += -fopenmp
 }
 
-# Project settings for Mac OS. Adjust the paths as needed on your system.
+# Project settings for Mac OS. Resolved dynamically via `brew --prefix` so this
+# works on both Intel (/usr/local) and Apple Silicon (/opt/homebrew) installs,
+# regardless of the installed graphicsmagick/libomp version.
 macx {
-  INCLUDEPATH += /usr/local/Cellar/graphicsmagick/1.3.35/include/GraphicsMagick
-  LIBS += -L/usr/local/Cellar/graphicsmagick/1.3.35/lib/ -lGraphicsMagick++
-  LIBS += -L/usr/local/Cellar/graphicsmagick/1.3.35/lib/ -lGraphicsMagick
-  LIBS += -L/usr/local/Cellar/graphicsmagick/1.3.35/lib/ -lGraphicsMagickWand
-  INCLUDEPATH += /usr/local/Cellar/graphicsmagick/1.3.35/include/GraphicsMagick
-  DEPENDPATH += /usr/local/Cellar/graphicsmagick/1.3.35/include/GraphicsMagick
-  PRE_TARGETDEPS += /usr/local/Cellar/graphicsmagick/1.3.35/lib/libGraphicsMagick++.la
-  PRE_TARGETDEPS += /usr/local/Cellar/graphicsmagick/1.3.35/lib/libGraphicsMagick.la
-  PRE_TARGETDEPS += /usr/local/Cellar/graphicsmagick/1.3.35/lib/libGraphicsMagickWand.la
-  LIBS += -lbz2 -lxml2 -lz -lm -L /usr/local/lib /usr/local/lib/libomp.dylib
-  QMAKE_CXXFLAGS += -Xpreprocessor -fopenmp -lomp -I/usr/local/include
+  GM_PREFIX = $$system(brew --prefix graphicsmagick 2>/dev/null)
+  isEmpty(GM_PREFIX): GM_PREFIX = /usr/local
+  OMP_PREFIX = $$system(brew --prefix libomp 2>/dev/null)
+  isEmpty(OMP_PREFIX): OMP_PREFIX = /usr/local
+
+  INCLUDEPATH += $$GM_PREFIX/include/GraphicsMagick
+  DEPENDPATH += $$GM_PREFIX/include/GraphicsMagick
+  LIBS += -L$$GM_PREFIX/lib/ -lGraphicsMagick++ -lGraphicsMagick -lGraphicsMagickWand
+  LIBS += -lbz2 -lxml2 -lz -lm -L$$OMP_PREFIX/lib $$OMP_PREFIX/lib/libomp.dylib
+  QMAKE_CXXFLAGS += -Xpreprocessor -fopenmp -I$$OMP_PREFIX/include
   QMAKE_LFLAGS += -lomp
 }
 
@@ -97,6 +104,7 @@ SOURCES += src/main.cpp \
     src/progress/batchprogress.cpp \
     src/workers/filterworker.cpp \
     src/workers/filterworkermp.cpp \
+    src/workers/pluginfilterworker.cpp \
     src/workers/FloodFillWorker.cpp \
     src/tools/EraserTool.cpp \
     src/toolSettings/erasersettingswidget.cpp \
@@ -107,6 +115,9 @@ SOURCES += src/main.cpp \
     src/dialogs/dropshadowdialog.cpp
 
 HEADERS += src/mainwindow.h \
+    src/plugins/AppContext.h \
+    src/plugins/IPhotoflarePlugin.h \
+    src/plugins/PluginManager.h \
     src/dialogs/aboutdialog.h \
     src/dialogs/NewDialog.h \
     src/dialogs/textdialog.h \
@@ -152,6 +163,7 @@ HEADERS += src/mainwindow.h \
     src/progress/batchprogress.h \
     src/workers/filterworker.h \
     src/workers/filterworkermp.h \
+    src/workers/pluginfilterworker.h \
     src/workers/FloodFillWorker.h \
     src/tools/EraserTool.h \
     src/toolSettings/erasersettingswidget.h \
@@ -215,12 +227,14 @@ TRANSLATIONS = languages/en.ts \
                languages/es.ts \
                languages/ja.ts \
                languages/tr.ts \
-               languages/ko.ts
+               languages/ko.ts \
+               languages/pl.ts
 
 # Generate translations in build
 TRANSLATIONS_FILES =
 
 qtPrepareTool(LRELEASE, lrelease)
+QT_TRANSLATIONS_DIR = $$[QT_INSTALL_TRANSLATIONS]
 for(tsfile, TRANSLATIONS) {
     qmfile = $$shadowed($$tsfile)
     qmfile ~= s,.ts$,.qm,
@@ -228,9 +242,23 @@ for(tsfile, TRANSLATIONS) {
     !exists($$qmdir) {
         mkpath($$qmdir)|error("Aborting.")
     }
-    #command = $$LRELEASE -removeidentical $$tsfile -qm $$qmfile
-    #system($$command)|error("Failed to run: $$command")
+    command = $$LRELEASE -removeidentical $$tsfile -qm $$qmfile
+    system($$command)|error("Failed to run: $$command")
     TRANSLATIONS_FILES += $$qmfile
+
+    # Bundle Qt's own "qtbase" catalog (translates standard dialog/button
+    # text such as OK/Cancel) alongside our app catalog. Without this, those
+    # strings only translate on machines that have the Qt SDK installed,
+    # since our loader otherwise only looks next to the executable.
+    langCode = $$basename(tsfile)
+    langCode ~= s,\\.ts$,,
+    qtBaseQmSrc = $${QT_TRANSLATIONS_DIR}/qtbase_$${langCode}.qm
+    exists($$qtBaseQmSrc) {
+        qtBaseQmDest = $$qmdir/qtbase_$${langCode}.qm
+        copycmd = $$QMAKE_COPY $$system_path($$qtBaseQmSrc) $$system_path($$qtBaseQmDest)
+        system($$copycmd)|error("Failed to run: $$copycmd")
+        TRANSLATIONS_FILES += $$qtBaseQmDest
+    }
 }
 
 # installs
