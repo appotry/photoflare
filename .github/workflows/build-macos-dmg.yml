@@ -36,7 +36,15 @@ jobs:
 
       # Build the standalone gmic_qt binary the same way as the Linux AppImage
       # workflow, so macOS users get the G'MIC-Qt filter too.
+      #
+      # CImg.h-heavy translation units are slow to compile at -O2, and macOS
+      # runners only have 3 vCPUs, so the tail end of the parallel build (the
+      # last heavy file or two, with no other cores left to help) can go quiet
+      # for several minutes and look like a hang even when it's just slow.
+      # timeout-minutes bounds a genuine hang instead of the 6h job default;
+      # --verbose prints each compiler invocation so progress is visible.
       - name: Build and stage gmic-qt
+        timeout-minutes: 30
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -84,7 +92,7 @@ jobs:
             -DENABLE_FFTW3=ON \
             -DENABLE_CURL=ON \
             -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-gmic-qt --parallel
+          cmake --build build-gmic-qt --parallel --verbose
 
       - name: Build photoflare
         run: |

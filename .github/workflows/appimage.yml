@@ -57,7 +57,13 @@ jobs:
 
       # Clone gmic-qt and the matching G'MIC source tree, build the standalone
       # gmic_qt binary, and stage it into appdir/usr/bin/ alongside photoflare.
+      #
+      # timeout-minutes bounds a genuine hang instead of the 6h job default;
+      # --verbose prints each compiler invocation so progress is visible (the
+      # tail end of the parallel build can go quiet for a while on heavy
+      # CImg.h-based translation units even when it's just slow, not stuck).
       - name: Build and stage gmic-qt
+        timeout-minutes: 30
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -115,7 +121,7 @@ jobs:
             -DENABLE_CURL=ON \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_EXE_LINKER_FLAGS="-no-pie"
-          cmake --build build-gmic-qt --parallel
+          cmake --build build-gmic-qt --parallel --verbose
           cp build-gmic-qt/gmic_qt appdir/usr/bin/gmic_photoflare_qt
 
       # Download linuxdeploy and its Qt plugin into a tools/ subdirectory
